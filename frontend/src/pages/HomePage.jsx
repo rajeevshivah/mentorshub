@@ -174,7 +174,7 @@ export default function HomePage({ onBook }) {
               <div className="w-56 h-56 md:w-64 md:h-64 rounded-3xl overflow-hidden
                 border-2 border-yellow-500/30 shadow-2xl shadow-yellow-500/10">
                 <img
-                  src="https://minicimextech.com/rajeev.jpg"
+                  src="https://i.ibb.co/G4LxCjJB/1757955995866-1.png"
                   alt="Rajeev Shivah"
                   className="w-full h-full object-cover"
                   onError={(e) => {
