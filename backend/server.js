@@ -23,7 +23,10 @@ app.use(cors({
   origin: [
     "http://localhost:3000",
     "https://mentorshub-five.vercel.app",
-    "https://minicimextech.com",
+    "https://rajeevshivah.me",
+    "https://www.rajeevshivah.me",
+    "https://mentorshub.rajeevshivah.me",
+    "https://www.minicimextech.com",
     process.env.FRONTEND_URL,
   ],
   credentials: true,
