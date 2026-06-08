@@ -14,11 +14,13 @@ const bookingSchema = new mongoose.Schema({
     college: String, year: String, skills: String,
     goals: String, questions: String,
   },
-  status: {
-    type: String,
-    enum: ["pending", "confirmed", "completed", "cancelled", "rescheduled"],
-    default: "pending",
-  },
+status: {
+  type: String,
+  enum: ["pending", "confirmed", "completed", "cancelled", "rescheduled", "pending_upi"],
+  default: "pending",
+},
+paymentMethod: { type: String, enum: ["razorpay", "upi"], default: "razorpay" },
+upiTransactionId: { type: String },
   payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
   meetLink: { type: String },
   adminNotes: { type: String },

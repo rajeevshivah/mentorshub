@@ -23,6 +23,8 @@ export default function BookingPage({ selectedPkgId, setPage }) {
   const [availableSlots, setAvailableSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [payLoading, setPayLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("upi");
+const [upiTransactionId, setUpiTransactionId] = useState("");
 
   // ---- Calendar state ----
   const now = new Date();
@@ -172,7 +174,38 @@ export default function BookingPage({ selectedPkgId, setPage }) {
 
   const pkg = PACKAGES.find((p) => p.id === selectedPkg) || PACKAGES[1];
   const inputClass = "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-yellow-500/50 outline-none text-sm transition-colors";
-
+// ---- UPI booking handler ----
+const handleUpiBooking = async () => {
+  if (!user) {
+    showToast("Please login first", "error");
+    return;
+  }
+  if (!upiTransactionId.trim()) {
+    showToast("Please enter your UPI transaction ID", "error");
+    return;
+  }
+  setPayLoading(true);
+  try {
+    await bookingAPI.create({
+      packageId: String(pkg.id),
+      packageName: pkg.name,
+      packagePrice: pkg.price,
+      packageDuration: pkg.duration,
+      date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
+      timeSlot: selectedSlot,
+      studentInfo: form,
+      paymentMethod: "upi",
+      upiTransactionId: upiTransactionId.trim(),
+      meetLink: null,
+    });
+    showToast("Booking submitted! You'll get an email within 2 hours 🎉");
+    setPage("dashboard");
+  } catch (err) {
+    showToast(err.message || "Something went wrong", "error");
+  } finally {
+    setPayLoading(false);
+  }
+};
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
 
@@ -487,6 +520,7 @@ export default function BookingPage({ selectedPkgId, setPage }) {
         </div>
       )}
 
+
       {/* ============================================================
           STEP 4 — Payment
       ============================================================ */}
@@ -517,37 +551,145 @@ export default function BookingPage({ selectedPkgId, setPage }) {
             </div>
           </div>
 
-          {/* Razorpay info */}
-          <div className="bg-blue-500/6 border border-blue-500/20 rounded-xl p-4 mb-4">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center
-                font-bold text-white text-xs flex-shrink-0">
-                R
+          {/* ---- Payment Options ---- */}
+          <div className="space-y-4 mb-4">
+
+            {/* Option 1 — Razorpay (coming soon) */}
+            <div className="relative border border-white/7 rounded-2xl p-5 opacity-50">
+              {/* Coming soon overlay */}
+              <div className="absolute top-3 right-3 bg-yellow-500/15 border border-yellow-500/30
+                text-yellow-400 text-xs px-2 py-0.5 rounded-full font-medium">
+                Coming Soon
               </div>
-              <div>
-                <div className="font-semibold text-sm">Razorpay Secure Payment</div>
-                <div className="text-xs text-gray-400">256-bit SSL · PCI DSS compliant</div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center
+                  font-bold text-white text-xs flex-shrink-0">
+                  R
+                </div>
+                <div>
+                  <div className="font-semibold text-sm">Pay via Razorpay</div>
+                  <div className="text-xs text-gray-400">Cards · Net Banking · EMI · Wallets</div>
+                </div>
               </div>
+              <div className="flex gap-2 flex-wrap">
+                {["UPI", "Cards", "Net Banking", "EMI", "Wallets"].map((m) => (
+                  <span key={m} className="bg-white/6 text-gray-400 text-xs px-2.5 py-1 rounded-md">
+                    {m}
+                  </span>
+                ))}
+              </div>
+              <button
+                disabled
+                className="w-full mt-4 bg-white/10 text-gray-500 font-display font-bold
+                  py-3 rounded-xl text-sm cursor-not-allowed"
+              >
+                Online Payment — Coming Soon
+              </button>
             </div>
-            <div className="flex gap-2 flex-wrap">
-              {["UPI", "Cards", "Net Banking", "EMI", "Wallets"].map((m) => (
-                <span key={m} className="bg-white/6 text-gray-300 text-xs px-2.5 py-1 rounded-md">
-                  {m}
-                </span>
-              ))}
+
+            {/* Option 2 — UPI Manual (active) */}
+            <div className={`border rounded-2xl p-5 transition-all cursor-pointer
+              ${paymentMethod === "upi"
+                ? "border-yellow-500/40 bg-yellow-500/4"
+                : "border-white/10 hover:border-white/20"}`}
+              onClick={() => setPaymentMethod("upi")}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center
+                    justify-center text-green-400 text-lg flex-shrink-0">
+                    📱
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm">Pay via UPI</div>
+                    <div className="text-xs text-green-400">✓ Available now · Confirmed within 2 hours</div>
+                  </div>
+                </div>
+                <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${
+                  paymentMethod === "upi"
+                    ? "border-yellow-400 bg-yellow-400"
+                    : "border-white/30"
+                }`} />
+              </div>
+
+              {paymentMethod === "upi" && (
+                <div className="mt-2">
+                  {/* QR Code */}
+                  <div className="text-center mb-4">
+                    <p className="text-xs text-gray-400 mb-3">
+                      Scan QR code with any UPI app
+                    </p>
+                    <div className="inline-block bg-white p-3 rounded-2xl">
+                      <img
+                        src="https://i.ibb.co/3ySRrMC6/Whats-App-Image-2026-06-09-at-12-22-51-AM.jpg"
+                        alt="UPI QR Code"
+                        className="w-48 h-48 object-contain rounded-lg"
+                      />
+                    </div>
+                    <div className="mt-3 bg-white/5 border border-white/10 rounded-xl
+                      px-4 py-2 inline-block">
+                      <p className="text-xs text-gray-400">Amount to pay</p>
+                      <p className="font-display font-black text-yellow-400 text-xl">
+                        ₹{pkg.price}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Steps */}
+                  <div className="bg-white/3 border border-white/7 rounded-xl p-4 mb-4">
+                    <p className="text-xs font-display font-bold text-white mb-2">
+                      How it works:
+                    </p>
+                    {[
+                      "Scan QR and pay ₹" + pkg.price,
+                      "Copy the transaction ID from your UPI app",
+                      "Enter it below and submit",
+                      "We'll confirm within 2 hours and send Meet link",
+                    ].map((step, i) => (
+                      <div key={i} className="flex items-start gap-2 mb-1.5">
+                        <span className="w-4 h-4 rounded-full bg-yellow-500/20 text-yellow-400
+                          text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
+                          {i + 1}
+                        </span>
+                        <span className="text-xs text-gray-300">{step}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Transaction ID input */}
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1.5">
+                      UPI Transaction ID *
+                    </label>
+                    <input
+                      value={upiTransactionId}
+                      onChange={(e) => setUpiTransactionId(e.target.value)}
+                      placeholder="e.g. 123456789012 or UPI ref number"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
+                        text-white placeholder-gray-500 focus:border-yellow-500/50 outline-none
+                        text-sm transition-colors"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Find this in your UPI app under transaction history
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Guarantee */}
           <div className="bg-green-500/6 border border-green-500/15 rounded-xl p-3 mb-4 text-xs text-green-400">
-            ✓ Google Meet link sent instantly after payment<br />
-            ✓ 100% refund if cancelled 24hrs before session
+            ✓ 100% refund if session not confirmed or cancelled 24hrs before<br />
+            ✓ Questions? Email <a href="mailto:rajeev@rajeevshivah.me"
+              className="underline">rajeev@rajeevshivah.me</a>
           </div>
 
           {/* Login warning */}
           {!user && (
-            <div className="bg-yellow-500/6 border border-yellow-500/20 rounded-xl p-3 mb-4 text-xs text-yellow-400">
-              ⚠️ You need to login before paying
+            <div className="bg-yellow-500/6 border border-yellow-500/20 rounded-xl p-3 mb-4
+              text-xs text-yellow-400">
+              ⚠️ Please login before completing your booking
             </div>
           )}
 
@@ -561,15 +703,20 @@ export default function BookingPage({ selectedPkgId, setPage }) {
               ← Back
             </button>
             <button
-              onClick={handlePayment}
-              disabled={payLoading}
+              onClick={handleUpiBooking}
+              disabled={payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()}
               className={`flex-[2] bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
                 font-display font-bold py-3 rounded-xl transition-all
-                ${payLoading ? "opacity-60 cursor-not-allowed" : "hover:-translate-y-0.5"}`}
+                ${payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()
+                  ? "opacity-40 cursor-not-allowed"
+                  : "hover:-translate-y-0.5"}`}
             >
-              {payLoading ? "Processing..." : `Pay ₹${pkg.price} Securely 🔒`}
+              {payLoading ? "Submitting..." : "Submit Booking 🚀"}
             </button>
           </div>
+          <p className="text-center text-xs text-gray-500 mt-3">
+            Razorpay online payment coming soon
+          </p>
         </div>
       )}
     </div>

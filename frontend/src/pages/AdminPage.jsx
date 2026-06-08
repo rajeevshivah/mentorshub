@@ -1,7 +1,5 @@
 // ============================================================
 // AdminPage.jsx — Complete Admin Dashboard
-// Features: Stats, Bookings with filters, Slot management,
-// Payments, Students, Analytics, CSV export, Email to student
 // ============================================================
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -31,13 +29,18 @@ const STATUS_COLORS = {
   completed: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   cancelled: "bg-red-500/10 text-red-400 border-red-500/20",
   pending: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+  pending_upi: "bg-orange-500/10 text-orange-400 border-orange-500/20",
 };
+
+const PACKAGES_LIST = [
+  "Quick Guidance","Roadmap Session","Full Mentorship",
+  "Resume Review","Interview Prep","Project Guidance",
+];
 
 export default function AdminPage({ setPage }) {
   const { user } = useAuth();
   const { showToast } = useToast();
 
-  // ---- Tab & Loading ----
   const [tab, setTab] = useState("overview");
   const [loading, setLoading] = useState(true);
 
@@ -47,8 +50,9 @@ export default function AdminPage({ setPage }) {
   const [payments, setPayments] = useState([]);
   const [slots, setSlots] = useState([]);
   const [students, setStudents] = useState([]);
+  const [blockedDates, setBlockedDates] = useState([]);
 
-  // ---- Booking filters ----
+  // ---- Filters ----
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
@@ -57,6 +61,11 @@ export default function AdminPage({ setPage }) {
   const [newSlotTime, setNewSlotTime] = useState("");
   const [newSlotDays, setNewSlotDays] = useState([...DAYS].filter(d => d !== "Sunday"));
   const [blockedDate, setBlockedDate] = useState("");
+  const [blockReason, setBlockReason] = useState("");
+  const [vacationStart, setVacationStart] = useState("");
+  const [vacationEnd, setVacationEnd] = useState("");
+  const [vacationReason, setVacationReason] = useState("");
+  const [cleanOptions, setCleanOptions] = useState({});
 
   // ---- Modals ----
   const [noteModal, setNoteModal] = useState(null);
@@ -65,6 +74,8 @@ export default function AdminPage({ setPage }) {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [meetModal, setMeetModal] = useState(null);
+  const [meetLinkInput, setMeetLinkInput] = useState("");
 
   // ---- Guard ----
   if (!user || user.role !== "admin") {
@@ -83,21 +94,24 @@ export default function AdminPage({ setPage }) {
 
   useEffect(() => { fetchAll(); }, []);
 
+  // ---- FIX 1: properly destructure all 6 results ----
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [s, b, p, sl, st] = await Promise.all([
+      const [s, b, p, sl, st, bd] = await Promise.all([
         adminAPI.getStats(),
         adminAPI.getBookings(),
         adminAPI.getPayments(),
         adminAPI.getSlots(),
         adminAPI.getStudents(),
+        adminAPI.getBlockedDates(),
       ]);
       setStats(s.stats);
       setBookings(b.bookings);
       setPayments(p.payments);
       setSlots(sl.slots);
       setStudents(st.students);
+      setBlockedDates(bd.blockedDates);
     } catch (err) {
       showToast("Failed to load admin data", "error");
     } finally {
@@ -129,7 +143,6 @@ export default function AdminPage({ setPage }) {
     }
   };
 
-  // ---- Email ----
   const sendEmail = async () => {
     if (!emailSubject.trim() || !emailBody.trim()) {
       showToast("Please fill subject and message", "error");
@@ -137,7 +150,6 @@ export default function AdminPage({ setPage }) {
     }
     setSendingEmail(true);
     try {
-      // This calls your backend email endpoint
       await adminAPI.sendNote(emailModal.bookingId, `EMAIL: ${emailSubject}\n\n${emailBody}`);
       showToast(`Email sent to ${emailModal.email}!`);
       setEmailModal(null);
@@ -150,16 +162,35 @@ export default function AdminPage({ setPage }) {
     }
   };
 
+  // ---- Confirm UPI payment ----
+  const confirmUpiPayment = async () => {
+    const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/bookings/${meetModal}/confirm-upi`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
+          },
+          body: JSON.stringify({ meetLink: link }),
+        }
+      );
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error);
+      showToast("Payment confirmed! Meet link sent to student ✅");
+      setMeetModal(null);
+      setMeetLinkInput("");
+      fetchAll();
+    } catch (err) {
+      showToast(err.message || "Failed to confirm", "error");
+    }
+  };
+
   // ---- Slot actions ----
   const addSlot = async () => {
-    if (!newSlotTime) {
-      showToast("Please select a time", "error");
-      return;
-    }
-    if (newSlotDays.length === 0) {
-      showToast("Please select at least one day", "error");
-      return;
-    }
+    if (!newSlotTime) { showToast("Please select a time", "error"); return; }
     try {
       await adminAPI.addSlot(newSlotTime);
       showToast(`Slot ${newSlotTime} added!`);
@@ -199,7 +230,7 @@ export default function AdminPage({ setPage }) {
 
   // ---- CSV Export ----
   const exportCSV = () => {
-    const headers = ["Student","Email","Phone","Package","Date","Time","Amount","Status"];
+    const headers = ["Student","Email","Phone","Package","Date","Time","Amount","Status","Payment Method","Transaction ID"];
     const rows = filteredBookings.map(b => [
       b.user?.name || b.studentInfo?.name || "",
       b.user?.email || b.studentInfo?.email || "",
@@ -209,6 +240,8 @@ export default function AdminPage({ setPage }) {
       b.timeSlot,
       `₹${b.packagePrice}`,
       b.status,
+      b.paymentMethod || "razorpay",
+      b.upiTransactionId || "—",
     ]);
     const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -234,7 +267,7 @@ export default function AdminPage({ setPage }) {
     return matchStatus && matchDate && matchSearch;
   });
 
-  // ---- Analytics data ----
+  // ---- Analytics ----
   const packageCounts = PACKAGES_LIST.map(pkg => ({
     name: pkg,
     count: bookings.filter(b => b.packageName === pkg).length,
@@ -250,12 +283,10 @@ export default function AdminPage({ setPage }) {
   const revenueData = Object.entries(revenueByDay)
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-7);
-
   const maxRevenue = Math.max(...revenueData.map(([, v]) => v), 1);
 
   const inputClass = "bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-yellow-500/50 transition-colors";
 
-  // ---- RENDER ----
   return (
     <div className="flex min-h-screen">
 
@@ -265,38 +296,28 @@ export default function AdminPage({ setPage }) {
           <div className="font-display font-black text-sm text-yellow-400">ADMIN PANEL</div>
           <div className="text-xs text-gray-400 mt-1">MentorHub · {user.email.split("@")[0]}</div>
         </div>
-
-        {/* Back to site */}
-        <button
-          onClick={() => setPage("home")}
+        <button onClick={() => setPage("home")}
           className="flex items-center gap-2 px-5 py-3 text-xs text-gray-400
-            hover:text-white transition-all border-b border-white/7 hover:bg-white/3"
-        >
+            hover:text-white transition-all border-b border-white/7 hover:bg-white/3">
           ← Back to Site
         </button>
-
-        {/* Nav tabs */}
         <div className="flex-1 py-2 overflow-y-auto">
           {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
+            <button key={t.id} onClick={() => setTab(t.id)}
               className={`w-full flex items-center gap-3 px-5 py-3 text-sm transition-all text-left
                 ${tab === t.id
                   ? "border-l-2 border-yellow-400 text-yellow-400 bg-yellow-500/5"
-                  : "text-gray-400 hover:text-white hover:bg-white/3"}`}
-            >
+                  : "text-gray-400 hover:text-white hover:bg-white/3"}`}>
               <span>{t.icon}</span>
               <span className="font-medium">{t.label}</span>
-              {t.id === "bookings" && bookings.filter(b => b.status === "confirmed").length > 0 && (
-                <span className="ml-auto bg-yellow-400 text-black text-xs font-bold px-1.5 py-0.5 rounded-full">
-                  {bookings.filter(b => b.status === "confirmed").length}
+              {t.id === "bookings" && bookings.filter(b => b.status === "pending_upi").length > 0 && (
+                <span className="ml-auto bg-orange-400 text-black text-xs font-bold px-1.5 py-0.5 rounded-full">
+                  {bookings.filter(b => b.status === "pending_upi").length}
                 </span>
               )}
             </button>
           ))}
         </div>
-
         <div className="p-4 border-t border-white/7">
           <div className="text-xs text-gray-500">MentorHub Admin v1.0</div>
         </div>
@@ -317,7 +338,6 @@ export default function AdminPage({ setPage }) {
       {/* ---- Main Content ---- */}
       <div className="flex-1 md:ml-56 overflow-y-auto pb-20 md:pb-8">
         <div className="p-6 md:p-8 max-w-6xl mx-auto">
-
           {loading ? (
             <div className="text-center py-24 text-gray-400">
               <div className="text-5xl mb-4">⏳</div>
@@ -325,15 +345,12 @@ export default function AdminPage({ setPage }) {
             </div>
           ) : (
             <>
-
               {/* ============================================================
                   OVERVIEW
               ============================================================ */}
               {tab === "overview" && stats && (
                 <div>
                   <h2 className="font-display text-2xl font-black mb-6">Overview</h2>
-
-                  {/* Stats */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                     {[
                       ["Total Bookings", stats.totalBookings, "text-yellow-400", "📋"],
@@ -341,7 +358,7 @@ export default function AdminPage({ setPage }) {
                       ["Completed", stats.completed, "text-blue-400", "🎯"],
                       ["Revenue", `₹${stats.totalRevenue.toLocaleString("en-IN")}`, "text-teal-400", "💰"],
                     ].map(([label, value, color, icon]) => (
-                      <div key={label} className="bg-white/4 border border-white/7 rounded-2xl p-5 hover:border-white/12 transition-all">
+                      <div key={label} className="bg-white/4 border border-white/7 rounded-2xl p-5">
                         <div className="text-2xl mb-2">{icon}</div>
                         <div className={`font-display text-2xl md:text-3xl font-black ${color}`}>{value}</div>
                         <div className="text-gray-400 text-sm mt-1">{label}</div>
@@ -349,7 +366,29 @@ export default function AdminPage({ setPage }) {
                     ))}
                   </div>
 
-                  {/* Quick actions */}
+                  {/* Pending UPI alert */}
+                  {bookings.filter(b => b.status === "pending_upi").length > 0 && (
+                    <div className="bg-orange-500/8 border border-orange-500/25 rounded-2xl p-4 mb-6
+                      flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">⚠️</span>
+                        <div>
+                          <div className="font-display font-bold text-orange-400">
+                            {bookings.filter(b => b.status === "pending_upi").length} UPI Payment{bookings.filter(b => b.status === "pending_upi").length > 1 ? "s" : ""} Pending
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            Verify and confirm these bookings
+                          </div>
+                        </div>
+                      </div>
+                      <button onClick={() => { setTab("bookings"); setFilterStatus("pending_upi"); }}
+                        className="bg-orange-500/15 border border-orange-500/30 text-orange-400
+                          px-4 py-2 rounded-xl text-xs font-display font-bold hover:bg-orange-500/25 transition-all">
+                        Review Now →
+                      </button>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
                     {[
                       ["📋 View Bookings", () => setTab("bookings"), "border-white/10"],
@@ -365,7 +404,6 @@ export default function AdminPage({ setPage }) {
                     ))}
                   </div>
 
-                  {/* Recent bookings table */}
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-display font-bold text-lg">Recent Bookings</h3>
                     <button onClick={() => setTab("bookings")} className="text-yellow-400 text-xs hover:underline">
@@ -376,7 +414,12 @@ export default function AdminPage({ setPage }) {
                     bookings={bookings.slice(0, 5)}
                     onStatusUpdate={updateBookingStatus}
                     onNote={(id) => { setNoteModal(id); setNoteText(""); }}
-                    onEmail={(b) => setEmailModal({ bookingId: b._id, email: b.user?.email || b.studentInfo?.email, name: b.user?.name || b.studentInfo?.name })}
+                    onEmail={(b) => setEmailModal({
+                      bookingId: b._id,
+                      email: b.user?.email || b.studentInfo?.email,
+                      name: b.user?.name || b.studentInfo?.name,
+                    })}
+                    onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
                   />
                 </div>
               )}
@@ -390,53 +433,45 @@ export default function AdminPage({ setPage }) {
                     <h2 className="font-display text-2xl font-black">All Bookings</h2>
                     <button onClick={exportCSV}
                       className="bg-white/5 border border-white/10 text-white px-4 py-2 rounded-xl
-                        text-sm font-display font-semibold hover:bg-white/8 transition-all flex items-center gap-2">
+                        text-sm font-display font-semibold hover:bg-white/8 transition-all">
                       📥 Export CSV
                     </button>
                   </div>
 
-                  {/* Filters */}
                   <div className="bg-white/3 border border-white/7 rounded-2xl p-4 mb-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {/* Search */}
                       <div>
                         <label className="block text-xs text-gray-400 mb-1.5">Search</label>
-                        <input
-                          value={filterSearch}
-                          onChange={(e) => setFilterSearch(e.target.value)}
+                        <input value={filterSearch} onChange={(e) => setFilterSearch(e.target.value)}
                           placeholder="Name, email, package..."
-                          className={`${inputClass} w-full`}
-                        />
+                          className={`${inputClass} w-full`} />
                       </div>
-                      {/* Status filter */}
                       <div>
                         <label className="block text-xs text-gray-400 mb-1.5">Status</label>
                         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
                           className={`${inputClass} w-full`}>
                           <option value="all">All Status</option>
+                          <option value="pending_upi">⏳ Pending UPI</option>
                           <option value="confirmed">Confirmed</option>
                           <option value="completed">Completed</option>
                           <option value="cancelled">Cancelled</option>
                           <option value="pending">Pending</option>
                         </select>
                       </div>
-                      {/* Date filter */}
                       <div>
                         <label className="block text-xs text-gray-400 mb-1.5">Date</label>
-                        <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
+                        <input type="date" value={filterDate}
+                          onChange={(e) => setFilterDate(e.target.value)}
                           className={`${inputClass} w-full`} />
                       </div>
                     </div>
-                    {/* Filter summary */}
                     <div className="flex items-center justify-between mt-3">
                       <span className="text-xs text-gray-400">
                         Showing <span className="text-white font-medium">{filteredBookings.length}</span> of {bookings.length} bookings
                       </span>
                       {(filterStatus !== "all" || filterDate || filterSearch) && (
-                        <button
-                          onClick={() => { setFilterStatus("all"); setFilterDate(""); setFilterSearch(""); }}
-                          className="text-xs text-yellow-400 hover:underline"
-                        >
+                        <button onClick={() => { setFilterStatus("all"); setFilterDate(""); setFilterSearch(""); }}
+                          className="text-xs text-yellow-400 hover:underline">
                           Clear filters
                         </button>
                       )}
@@ -465,6 +500,7 @@ export default function AdminPage({ setPage }) {
                             setEmailSubject("");
                             setEmailBody("");
                           }}
+                          onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
                         />
                       ))}
                     </div>
@@ -477,13 +513,12 @@ export default function AdminPage({ setPage }) {
               ============================================================ */}
               {tab === "slots" && (
                 <div>
-                  <h2 className="font-display text-2xl font-black mb-6">Manage Slots</h2>
-
+                  <h2 className="font-display text-2xl font-black mb-6">Manage Slots & Availability</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+
                     {/* Add new slot */}
                     <div className="bg-white/4 border border-white/7 rounded-2xl p-5">
-                      <h3 className="font-display font-bold mb-4">➕ Add New Slot</h3>
-
+                      <h3 className="font-display font-bold mb-4">➕ Add Time Slot</h3>
                       <div className="mb-4">
                         <label className="block text-xs text-gray-400 mb-1.5">Select Time</label>
                         <select value={newSlotTime} onChange={(e) => setNewSlotTime(e.target.value)}
@@ -494,98 +529,197 @@ export default function AdminPage({ setPage }) {
                           ))}
                         </select>
                       </div>
-
-                      <div className="mb-4">
-                        <label className="block text-xs text-gray-400 mb-2">Available Days</label>
-                        <div className="flex flex-wrap gap-2">
-                          {DAYS.map((day) => (
-                            <button
-                              key={day}
-                              onClick={() => toggleDay(day)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
-                                ${newSlotDays.includes(day)
-                                  ? "bg-yellow-400 text-black border-yellow-400"
-                                  : "border-white/10 text-gray-400 hover:border-white/25"}`}
-                            >
-                              {day.slice(0, 3)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       <button onClick={addSlot}
                         className="w-full bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
                           font-display font-bold py-2.5 rounded-xl text-sm">
                         + Add Slot
                       </button>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Added slots are available every day unless blocked below
+                      </p>
                     </div>
 
-                    {/* Block a date */}
+                    {/* Block single date */}
                     <div className="bg-white/4 border border-white/7 rounded-2xl p-5">
                       <h3 className="font-display font-bold mb-4">🚫 Block a Date</h3>
-                      <p className="text-gray-400 text-xs mb-4">
-                        Block specific dates when you're unavailable — no slots will show for that day.
-                      </p>
-                      <div className="mb-4">
-                        <label className="block text-xs text-gray-400 mb-1.5">Select Date to Block</label>
-                        <input type="date" value={blockedDate} onChange={(e) => setBlockedDate(e.target.value)}
-                          className={`${inputClass} w-full`} />
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1.5">Date</label>
+                          <input type="date" value={blockedDate}
+                            onChange={(e) => setBlockedDate(e.target.value)}
+                            min={new Date().toISOString().split("T")[0]}
+                            className={`${inputClass} w-full`} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1.5">Reason (optional)</label>
+                          <input placeholder="Holiday, Personal, etc."
+                            value={blockReason} onChange={(e) => setBlockReason(e.target.value)}
+                            className={`${inputClass} w-full`} />
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (!blockedDate) { showToast("Please select a date", "error"); return; }
+                            try {
+                              await adminAPI.blockDate(blockedDate, blockReason);
+                              showToast(`${blockedDate} blocked!`);
+                              setBlockedDate(""); setBlockReason("");
+                              fetchAll();
+                            } catch (err) { showToast(err.message, "error"); }
+                          }}
+                          className="w-full border border-red-500/30 text-red-400 font-display font-bold
+                            py-2.5 rounded-xl text-sm hover:bg-red-500/10 transition-all">
+                          🚫 Block This Date
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Vacation mode */}
+                    <div className="bg-white/4 border border-white/7 rounded-2xl p-5">
+                      <h3 className="font-display font-bold mb-2">✈️ Vacation Mode</h3>
+                      <p className="text-gray-400 text-xs mb-4">Block all slots for a date range at once.</p>
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1.5">From</label>
+                            <input type="date" value={vacationStart}
+                              onChange={(e) => setVacationStart(e.target.value)}
+                              min={new Date().toISOString().split("T")[0]}
+                              className={`${inputClass} w-full`} />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1.5">To</label>
+                            <input type="date" value={vacationEnd}
+                              onChange={(e) => setVacationEnd(e.target.value)}
+                              min={vacationStart || new Date().toISOString().split("T")[0]}
+                              className={`${inputClass} w-full`} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1.5">Reason</label>
+                          <input placeholder="Vacation, Conference, etc."
+                            value={vacationReason} onChange={(e) => setVacationReason(e.target.value)}
+                            className={`${inputClass} w-full`} />
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (!vacationStart || !vacationEnd) {
+                              showToast("Please select start and end dates", "error"); return;
+                            }
+                            try {
+                              const result = await adminAPI.blockDateRange(vacationStart, vacationEnd, vacationReason || "Vacation");
+                              showToast(`${result.dates?.length || 0} dates blocked! ✈️`);
+                              setVacationStart(""); setVacationEnd(""); setVacationReason("");
+                              fetchAll();
+                            } catch (err) { showToast(err.message, "error"); }
+                          }}
+                          className="w-full bg-blue-500/15 border border-blue-500/30 text-blue-400
+                            font-display font-bold py-2.5 rounded-xl text-sm hover:bg-blue-500/25 transition-all">
+                          ✈️ Block Date Range
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Clean database */}
+                    <div className="bg-red-500/4 border border-red-500/15 rounded-2xl p-5">
+                      <h3 className="font-display font-bold mb-2 text-red-400">🗑️ Clean Database</h3>
+                      <p className="text-gray-400 text-xs mb-4">Remove test data. Export CSV first!</p>
+                      <div className="space-y-2 mb-4">
+                        {[
+                          ["deleteBookings", "Delete all bookings"],
+                          ["deletePayments", "Delete all payments"],
+                          ["deleteStudents", "Delete all student accounts"],
+                        ].map(([key, label]) => (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox"
+                              checked={cleanOptions[key] || false}
+                              onChange={(e) => setCleanOptions({...cleanOptions, [key]: e.target.checked})}
+                              className="rounded" />
+                            <span className="text-sm text-gray-300">{label}</span>
+                          </label>
+                        ))}
                       </div>
                       <button
-                        onClick={() => {
-                          if (!blockedDate) { showToast("Please select a date", "error"); return; }
-                          showToast(`${blockedDate} blocked — students won't see slots for this day`);
-                          setBlockedDate("");
+                        onClick={async () => {
+                          if (!Object.values(cleanOptions).some(Boolean)) {
+                            showToast("Select at least one option", "error"); return;
+                          }
+                          if (!confirm("⚠️ This cannot be undone! Are you sure?")) return;
+                          try {
+                            const result = await adminAPI.cleanDatabase(cleanOptions);
+                            showToast(`Cleaned: ${JSON.stringify(result.deleted)}`);
+                            setCleanOptions({});
+                            fetchAll();
+                          } catch (err) { showToast(err.message, "error"); }
                         }}
-                        className="w-full border border-red-500/30 text-red-400 font-display font-bold
-                          py-2.5 rounded-xl text-sm hover:bg-red-500/10 transition-all"
-                      >
-                        Block This Date
+                        className="w-full bg-red-500/15 border border-red-500/30 text-red-400
+                          font-display font-bold py-2.5 rounded-xl text-sm hover:bg-red-500/25 transition-all">
+                        🗑️ Clean Selected Data
                       </button>
-                      <p className="text-xs text-gray-500 mt-3">
-                        💡 Coming soon: full blocked dates management
-                      </p>
                     </div>
                   </div>
 
-                  {/* Slots list */}
+                  {/* Current slots */}
                   <h3 className="font-display font-bold mb-4">
-                    Current Slots
+                    Active Slots
                     <span className="ml-2 text-gray-400 font-normal text-sm">
-                      ({slots.filter(s => s.isActive).length} active, {slots.filter(s => !s.isActive).length} disabled)
+                      ({slots.filter(s => s.isActive).length} active)
                     </span>
                   </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
+                    {slots.sort((a, b) => a.time.localeCompare(b.time)).map((s) => (
+                      <div key={s._id}
+                        className={`border rounded-xl p-3 transition-all text-center
+                          ${s.isActive ? "bg-green-500/5 border-green-500/20" : "bg-white/2 border-white/7 opacity-50"}`}>
+                        <div className="font-display font-bold">{s.time}</div>
+                        <div className={`text-xs mt-1 mb-3 ${s.isActive ? "text-green-400" : "text-gray-500"}`}>
+                          {s.isActive ? "● Active" : "○ Disabled"}
+                        </div>
+                        <div className="flex gap-1 justify-center">
+                          <button onClick={() => toggleSlot(s._id, s.isActive)}
+                            className="flex-1 text-xs border border-white/10 rounded-lg py-1
+                              hover:border-white/25 transition-all text-gray-400 hover:text-white">
+                            {s.isActive ? "Off" : "On"}
+                          </button>
+                          <button onClick={() => deleteSlot(s._id)}
+                            className="text-xs border border-red-500/20 text-red-400 rounded-lg
+                              px-2 py-1 hover:bg-red-500/10 transition-all">
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
 
-                  {slots.length === 0 ? (
-                    <div className="text-center py-12 bg-white/2 border border-white/7 rounded-2xl text-gray-400">
-                      <div className="text-4xl mb-3">🕐</div>
-                      <p className="mb-2">No slots added yet</p>
-                      <p className="text-xs">Add your first slot above or run the seed script</p>
+                  {/* Blocked dates */}
+                  <h3 className="font-display font-bold mb-4">
+                    Blocked Dates
+                    <span className="ml-2 text-gray-400 font-normal text-sm">
+                      ({blockedDates.length} blocked)
+                    </span>
+                  </h3>
+                  {blockedDates.length === 0 ? (
+                    <div className="text-center py-8 bg-white/2 border border-white/7 rounded-2xl text-gray-400 text-sm">
+                      No blocked dates — all dates are available
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                      {slots.sort((a, b) => a.time.localeCompare(b.time)).map((s) => (
-                        <div key={s._id}
-                          className={`border rounded-xl p-4 transition-all
-                            ${s.isActive
-                              ? "bg-green-500/5 border-green-500/20"
-                              : "bg-white/2 border-white/7 opacity-60"}`}>
-                          <div className="font-display font-bold text-lg mb-0.5">{s.time}</div>
-                          <div className={`text-xs mb-3 ${s.isActive ? "text-green-400" : "text-gray-500"}`}>
-                            {s.isActive ? "● Active" : "○ Disabled"}
+                      {blockedDates.map((b) => (
+                        <div key={b._id} className="bg-red-500/5 border border-red-500/15 rounded-xl p-3">
+                          <div className="font-display font-bold text-sm">
+                            {new Date(b.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                           </div>
-                          <div className="flex gap-2">
-                            <button onClick={() => toggleSlot(s._id, s.isActive)}
-                              className="flex-1 text-xs border border-white/10 rounded-lg py-1.5
-                                hover:border-white/25 transition-all text-gray-400 hover:text-white">
-                              {s.isActive ? "Disable" : "Enable"}
-                            </button>
-                            <button onClick={() => deleteSlot(s._id)}
-                              className="text-xs border border-red-500/20 text-red-400 rounded-lg
-                                px-2.5 py-1.5 hover:bg-red-500/10 transition-all">
-                              ✕
-                            </button>
-                          </div>
+                          <div className="text-xs text-red-400 mt-1">{b.reason}</div>
+                          <button onClick={async () => {
+                            try {
+                              await adminAPI.unblockDate(b._id);
+                              showToast("Date unblocked!");
+                              fetchAll();
+                            } catch (err) { showToast(err.message, "error"); }
+                          }}
+                            className="mt-2 w-full text-xs border border-white/10 text-gray-400
+                              rounded-lg py-1 hover:border-white/25 hover:text-white transition-all">
+                            Unblock
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -606,7 +740,6 @@ export default function AdminPage({ setPage }) {
                       </span>
                     </div>
                   </div>
-
                   <div className="bg-white/2 border border-white/7 rounded-2xl overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -614,9 +747,7 @@ export default function AdminPage({ setPage }) {
                           <tr className="border-b border-white/7 bg-white/2">
                             {["Student","Package","Amount","Payment ID","Method","Status","Date"].map((h) => (
                               <th key={h} className="text-left px-4 py-3 text-xs text-gray-400
-                                font-semibold font-display uppercase tracking-wide whitespace-nowrap">
-                                {h}
-                              </th>
+                                font-semibold font-display uppercase tracking-wide whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -627,29 +758,19 @@ export default function AdminPage({ setPage }) {
                                 <div className="font-medium">{p.user?.name}</div>
                                 <div className="text-xs text-gray-400">{p.user?.email}</div>
                               </td>
-                              <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">
-                                {p.booking?.packageName || "—"}
-                              </td>
-                              <td className="px-4 py-3 text-yellow-400 font-bold whitespace-nowrap">
-                                ₹{(p.amount / 100).toLocaleString("en-IN")}
-                              </td>
+                              <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.booking?.packageName || "—"}</td>
+                              <td className="px-4 py-3 text-yellow-400 font-bold whitespace-nowrap">₹{(p.amount / 100).toLocaleString("en-IN")}</td>
                               <td className="px-4 py-3">
                                 <span className="font-mono text-xs text-gray-400">
-                                  {p.razorpayPaymentId
-                                    ? p.razorpayPaymentId.slice(0, 18) + "..."
-                                    : "—"}
+                                  {p.razorpayPaymentId ? p.razorpayPaymentId.slice(0, 18) + "..." : "—"}
                                 </span>
                               </td>
                               <td className="px-4 py-3">
-                                <span className="bg-white/6 text-gray-300 text-xs px-2 py-1 rounded-md">
-                                  {p.method || "UPI"}
-                                </span>
+                                <span className="bg-white/6 text-gray-300 text-xs px-2 py-1 rounded-md">{p.method || "UPI"}</span>
                               </td>
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-1 rounded-full text-xs font-medium border
-                                  ${p.status === "paid"
-                                    ? "bg-green-500/10 text-green-400 border-green-500/20"
-                                    : "bg-red-500/10 text-red-400 border-red-500/20"}`}>
+                                  ${p.status === "paid" ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>
                                   {p.status}
                                 </span>
                               </td>
@@ -661,9 +782,7 @@ export default function AdminPage({ setPage }) {
                         </tbody>
                       </table>
                     </div>
-                    {payments.length === 0 && (
-                      <div className="text-center py-12 text-gray-400">No payments yet</div>
-                    )}
+                    {payments.length === 0 && <div className="text-center py-12 text-gray-400">No payments yet</div>}
                   </div>
                 </div>
               )}
@@ -679,15 +798,11 @@ export default function AdminPage({ setPage }) {
                       <span className="text-white font-bold">{students.length}</span> registered
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {students.map((s) => {
-                      const studentBookings = bookings.filter(
-                        b => b.user?._id === s._id || b.user === s._id
-                      );
+                      const studentBookings = bookings.filter(b => b.user?._id === s._id || b.user === s._id);
                       return (
-                        <div key={s._id} className="bg-white/4 border border-white/7 rounded-2xl p-5
-                          hover:border-white/12 transition-all">
+                        <div key={s._id} className="bg-white/4 border border-white/7 rounded-2xl p-5 hover:border-white/12 transition-all">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-yellow-500/20 text-yellow-400
@@ -701,31 +816,22 @@ export default function AdminPage({ setPage }) {
                             </div>
                             <div className="text-right">
                               <div className="text-xs text-gray-500">Sessions</div>
-                              <div className="font-display font-bold text-yellow-400">
-                                {studentBookings.length}
-                              </div>
+                              <div className="font-display font-bold text-yellow-400">{studentBookings.length}</div>
                             </div>
                           </div>
-
                           <div className="grid grid-cols-2 gap-2 text-xs text-gray-400 mb-3">
                             <div>📱 {s.phone || "—"}</div>
                             <div>🎓 {s.college || "—"}</div>
                             <div>📅 {s.year || "—"}</div>
                             <div>🗓 {new Date(s.createdAt).toLocaleDateString("en-IN")}</div>
                           </div>
-
-                          {s.skills && (
-                            <div className="text-xs text-gray-500 mb-3">
-                              💡 {s.skills}
-                            </div>
-                          )}
-
+                          {s.skills && <div className="text-xs text-gray-500 mb-3">💡 {s.skills}</div>}
                           {studentBookings.length > 0 && (
                             <div className="pt-3 border-t border-white/6">
                               <div className="text-xs text-gray-400 mb-1">Latest booking:</div>
                               <div className="text-xs text-white">
                                 {studentBookings[0].packageName} · {studentBookings[0].date}
-                                <span className={`ml-2 px-1.5 py-0.5 rounded text-xs border ${STATUS_COLORS[studentBookings[0].status]}`}>
+                                <span className={`ml-2 px-1.5 py-0.5 rounded text-xs border ${STATUS_COLORS[studentBookings[0].status] || ""}`}>
                                   {studentBookings[0].status}
                                 </span>
                               </div>
@@ -735,11 +841,9 @@ export default function AdminPage({ setPage }) {
                       );
                     })}
                   </div>
-
                   {students.length === 0 && (
                     <div className="text-center py-12 text-gray-400">
-                      <div className="text-4xl mb-3">👥</div>
-                      No students registered yet
+                      <div className="text-4xl mb-3">👥</div>No students registered yet
                     </div>
                   )}
                 </div>
@@ -751,24 +855,18 @@ export default function AdminPage({ setPage }) {
               {tab === "analytics" && (
                 <div>
                   <h2 className="font-display text-2xl font-black mb-6">Analytics</h2>
-
-                  {/* Revenue chart */}
                   <div className="bg-white/4 border border-white/7 rounded-2xl p-6 mb-6">
                     <h3 className="font-display font-bold mb-1">Revenue — Last 7 Days</h3>
                     <p className="text-gray-400 text-xs mb-6">Daily revenue from confirmed bookings</p>
                     {revenueData.length === 0 ? (
-                      <div className="text-center py-8 text-gray-400 text-sm">
-                        No revenue data yet
-                      </div>
+                      <div className="text-center py-8 text-gray-400 text-sm">No revenue data yet</div>
                     ) : (
                       <div className="flex items-end gap-3 h-40">
                         {revenueData.map(([date, amount]) => (
                           <div key={date} className="flex-1 flex flex-col items-center gap-2">
                             <div className="text-xs text-yellow-400 font-bold">₹{amount}</div>
-                            <div
-                              className="w-full bg-gradient-to-t from-yellow-500 to-yellow-300 rounded-t-lg transition-all"
-                              style={{ height: `${(amount / maxRevenue) * 100}%`, minHeight: "4px" }}
-                            />
+                            <div className="w-full bg-gradient-to-t from-yellow-500 to-yellow-300 rounded-t-lg"
+                              style={{ height: `${(amount / maxRevenue) * 100}%`, minHeight: "4px" }} />
                             <div className="text-xs text-gray-400 text-center">
                               {new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                             </div>
@@ -777,8 +875,6 @@ export default function AdminPage({ setPage }) {
                       </div>
                     )}
                   </div>
-
-                  {/* Package popularity */}
                   <div className="bg-white/4 border border-white/7 rounded-2xl p-6 mb-6">
                     <h3 className="font-display font-bold mb-1">Package Popularity</h3>
                     <p className="text-gray-400 text-xs mb-6">Bookings and revenue by package</p>
@@ -792,24 +888,18 @@ export default function AdminPage({ setPage }) {
                               <span className="text-sm font-medium">{p.name}</span>
                               <div className="text-right">
                                 <span className="text-xs text-gray-400">{p.count} bookings · </span>
-                                <span className="text-xs text-yellow-400 font-bold">
-                                  ₹{p.revenue.toLocaleString("en-IN")}
-                                </span>
+                                <span className="text-xs text-yellow-400 font-bold">₹{p.revenue.toLocaleString("en-IN")}</span>
                               </div>
                             </div>
                             <div className="h-2 bg-white/6 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-yellow-500 to-teal-400 rounded-full"
-                                style={{ width: `${(p.count / bookings.length) * 100}%` }}
-                              />
+                              <div className="h-full bg-gradient-to-r from-yellow-500 to-teal-400 rounded-full"
+                                style={{ width: `${(p.count / bookings.length) * 100}%` }} />
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
-
-                  {/* Summary stats */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
                       ["Avg Session Value", `₹${bookings.length ? Math.round(bookings.reduce((s, b) => s + b.packagePrice, 0) / bookings.length).toLocaleString("en-IN") : 0}`, "text-yellow-400"],
@@ -826,13 +916,12 @@ export default function AdminPage({ setPage }) {
                 </div>
               )}
 
-  {/* ============================================================
+              {/* ============================================================
                   TESTIMONIALS
               ============================================================ */}
               {tab === "testimonials" && (
                 <TestimonialsTab showToast={showToast} />
               )}
-
             </>
           )}
         </div>
@@ -844,17 +933,10 @@ export default function AdminPage({ setPage }) {
           onClick={(e) => e.target === e.currentTarget && setNoteModal(null)}>
           <div className="bg-dark-2 border border-white/10 rounded-2xl p-6 w-full max-w-md">
             <h3 className="font-display font-bold text-lg mb-2">📝 Add Session Note</h3>
-            <p className="text-gray-400 text-xs mb-4">
-              This note will be saved to the booking record for your reference.
-            </p>
-            <textarea
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              rows={4}
-              placeholder="Session summary, resources shared, next steps, feedback..."
+            <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)}
+              rows={4} placeholder="Session summary, resources shared, next steps..."
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white
-                text-sm outline-none focus:border-yellow-500/50 transition-colors resize-none mb-4"
-            />
+                text-sm outline-none focus:border-yellow-500/50 transition-colors resize-none mb-4" />
             <div className="flex gap-3">
               <button onClick={() => setNoteModal(null)}
                 className="flex-1 border border-white/10 py-2.5 rounded-xl text-sm font-display font-semibold">
@@ -882,24 +964,17 @@ export default function AdminPage({ setPage }) {
             <div className="space-y-3 mb-4">
               <div>
                 <label className="block text-xs text-gray-400 mb-1.5">Subject</label>
-                <input
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
+                <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)}
                   placeholder="Session notes, resources, follow-up..."
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5
-                    text-white text-sm outline-none focus:border-yellow-500/50 transition-colors"
-                />
+                    text-white text-sm outline-none focus:border-yellow-500/50 transition-colors" />
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1.5">Message</label>
-                <textarea
-                  value={emailBody}
-                  onChange={(e) => setEmailBody(e.target.value)}
-                  rows={5}
-                  placeholder="Write your message here..."
+                <textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)}
+                  rows={5} placeholder="Write your message here..."
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
-                    text-white text-sm outline-none focus:border-yellow-500/50 transition-colors resize-none"
-                />
+                    text-white text-sm outline-none focus:border-yellow-500/50 transition-colors resize-none" />
               </div>
             </div>
             <div className="flex gap-3">
@@ -917,18 +992,65 @@ export default function AdminPage({ setPage }) {
           </div>
         </div>
       )}
+
+      {/* ---- Meet Link Modal (for UPI confirmation) ---- */}
+      {meetModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={(e) => e.target === e.currentTarget && setMeetModal(null)}>
+          <div className="bg-dark-2 border border-white/10 rounded-2xl p-6 w-full max-w-md">
+            <h3 className="font-display font-bold text-lg mb-2">✓ Confirm UPI Payment</h3>
+            <p className="text-gray-400 text-xs mb-4">
+              Enter the meeting link. Student will receive email with this link instantly after confirmation.
+            </p>
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5">
+                  Google Meet or Zoom Link
+                </label>
+                <input
+                  value={meetLinkInput}
+                  onChange={(e) => setMeetLinkInput(e.target.value)}
+                  placeholder="https://meet.google.com/xxx or https://zoom.us/j/xxx"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
+                    text-white text-sm outline-none focus:border-yellow-500/50 transition-colors"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setMeetLinkInput("https://meet.google.com/")}
+                  className="text-xs border border-white/10 px-3 py-1.5 rounded-lg
+                    text-gray-400 hover:text-white hover:border-white/25 transition-all">
+                  📹 Google Meet
+                </button>
+                <button onClick={() => setMeetLinkInput("https://zoom.us/j/")}
+                  className="text-xs border border-white/10 px-3 py-1.5 rounded-lg
+                    text-gray-400 hover:text-white hover:border-white/25 transition-all">
+                  🎥 Zoom
+                </button>
+              </div>
+              <p className="text-xs text-gray-500">
+                Leave empty to use default Meet link
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setMeetModal(null)}
+                className="flex-1 border border-white/10 py-2.5 rounded-xl text-sm font-display font-semibold">
+                Cancel
+              </button>
+              <button onClick={confirmUpiPayment}
+                className="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
+                  font-display font-bold py-2.5 rounded-xl text-sm">
+                Confirm & Send Link ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ---- Helper: packages list for analytics ----
-const PACKAGES_LIST = [
-  "Quick Guidance","Roadmap Session","Full Mentorship",
-  "Resume Review","Interview Prep","Project Guidance",
-];
-
-// ---- Helper component: Booking Table (for overview) ----
-function BookingTable({ bookings, onStatusUpdate, onNote, onEmail }) {
+// ---- Helper component: Booking Table (overview tab) ----
+function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi }) {
   if (bookings.length === 0) {
     return <div className="text-center py-8 text-gray-400 text-sm">No bookings yet</div>;
   }
@@ -940,9 +1062,7 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail }) {
             <tr className="border-b border-white/7 bg-white/2">
               {["Student","Package","Date","Time","Amount","Status","Actions"].map((h) => (
                 <th key={h} className="text-left px-4 py-3 text-xs text-gray-400
-                  font-semibold font-display uppercase tracking-wide whitespace-nowrap">
-                  {h}
-                </th>
+                  font-semibold font-display uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
@@ -950,9 +1070,7 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail }) {
             {bookings.map((b) => (
               <tr key={b._id} className="border-b border-white/4 hover:bg-white/2 transition-all">
                 <td className="px-4 py-3">
-                  <div className="font-medium whitespace-nowrap">
-                    {b.user?.name || b.studentInfo?.name}
-                  </div>
+                  <div className="font-medium whitespace-nowrap">{b.user?.name || b.studentInfo?.name}</div>
                   <div className="text-xs text-gray-400">{b.user?.email || b.studentInfo?.email}</div>
                 </td>
                 <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{b.packageName}</td>
@@ -960,32 +1078,28 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail }) {
                 <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{b.timeSlot}</td>
                 <td className="px-4 py-3 text-yellow-400 font-bold whitespace-nowrap">₹{b.packagePrice}</td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium border whitespace-nowrap ${STATUS_COLORS[b.status]}`}>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium border whitespace-nowrap ${STATUS_COLORS[b.status] || ""}`}>
                     {b.status}
                   </span>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1">
                     {b.status === "confirmed" && (
-                      <button onClick={() => onStatusUpdate(b._id, "completed")}
-                        title="Mark completed"
+                      <button onClick={() => onStatusUpdate(b._id, "completed")} title="Mark completed"
                         className="w-7 h-7 rounded-lg bg-green-500/15 text-green-400 text-xs
-                          hover:bg-green-500/25 transition-all flex items-center justify-center">
-                        ✓
-                      </button>
+                          hover:bg-green-500/25 transition-all flex items-center justify-center">✓</button>
                     )}
-                    <button onClick={() => onNote(b._id)}
-                      title="Add note"
+                    {b.status === "pending_upi" && (
+                      <button onClick={() => onConfirmUpi(b._id)} title="Confirm UPI"
+                        className="w-7 h-7 rounded-lg bg-orange-500/15 text-orange-400 text-xs
+                          hover:bg-orange-500/25 transition-all flex items-center justify-center">💰</button>
+                    )}
+                    <button onClick={() => onNote(b._id)} title="Add note"
                       className="w-7 h-7 rounded-lg bg-blue-500/15 text-blue-400 text-xs
-                        hover:bg-blue-500/25 transition-all flex items-center justify-center">
-                      📝
-                    </button>
-                    <button onClick={() => onEmail(b)}
-                      title="Email student"
+                        hover:bg-blue-500/25 transition-all flex items-center justify-center">📝</button>
+                    <button onClick={() => onEmail(b)} title="Email student"
                       className="w-7 h-7 rounded-lg bg-purple-500/15 text-purple-400 text-xs
-                        hover:bg-purple-500/25 transition-all flex items-center justify-center">
-                      ✉️
-                    </button>
+                        hover:bg-purple-500/25 transition-all flex items-center justify-center">✉️</button>
                   </div>
                 </td>
               </tr>
@@ -997,13 +1111,12 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail }) {
   );
 }
 
-// ---- Helper component: Booking Card (for bookings tab) ----
-function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
+// ---- Helper component: Booking Card (bookings tab) ----
+function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="bg-white/4 border border-white/7 rounded-2xl overflow-hidden hover:border-white/12 transition-all">
-      {/* Main row */}
       <div className="p-5">
         <div className="flex flex-wrap justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -1013,12 +1126,8 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
                 {(b.user?.name || b.studentInfo?.name || "?")[0].toUpperCase()}
               </div>
               <div>
-                <div className="font-display font-bold">
-                  {b.user?.name || b.studentInfo?.name}
-                </div>
-                <div className="text-xs text-gray-400">
-                  {b.user?.email || b.studentInfo?.email}
-                </div>
+                <div className="font-display font-bold">{b.user?.name || b.studentInfo?.name}</div>
+                <div className="text-xs text-gray-400">{b.user?.email || b.studentInfo?.email}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-3 text-sm text-gray-300">
@@ -1028,9 +1137,8 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
               <span className="text-yellow-400 font-bold">₹{b.packagePrice}</span>
             </div>
           </div>
-
           <div className="flex flex-col items-end gap-2">
-            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${STATUS_COLORS[b.status]}`}>
+            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${STATUS_COLORS[b.status] || ""}`}>
               {b.status}
             </span>
             <button onClick={() => setExpanded(!expanded)}
@@ -1055,6 +1163,14 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
                 ✕ Cancel
               </button>
             </>
+          )}
+          {/* FIX 2: Use onConfirmUpi prop instead of inline fetch */}
+          {b.status === "pending_upi" && (
+            <button onClick={() => onConfirmUpi(b._id)}
+              className="bg-yellow-500/15 border border-yellow-500/30 text-yellow-400
+                px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-yellow-500/25 transition-all">
+              ✓ Confirm UPI Payment
+            </button>
           )}
           <button onClick={() => onNote(b._id, b.adminNotes)}
             className="bg-blue-500/10 border border-blue-500/20 text-blue-400
@@ -1108,6 +1224,21 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
                 <div className="text-gray-300">{b.studentInfo.questions}</div>
               </div>
             )}
+            {b.upiTransactionId && (
+              <div className="md:col-span-2">
+                <div className="text-xs text-gray-400 mb-1">UPI Transaction ID</div>
+                <div className="font-mono text-sm text-orange-400 bg-orange-500/5
+                  border border-orange-500/15 rounded-lg px-3 py-2">
+                  {b.upiTransactionId}
+                </div>
+              </div>
+            )}
+            {b.paymentMethod && (
+              <div>
+                <div className="text-xs text-gray-400 mb-1">Payment Method</div>
+                <div className="text-sm">{b.paymentMethod === "upi" ? "📱 UPI" : "💳 Razorpay"}</div>
+              </div>
+            )}
             {b.adminNotes && (
               <div className="md:col-span-2">
                 <div className="text-xs text-blue-400 mb-1">📝 Admin Notes</div>
@@ -1130,24 +1261,18 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail }) {
     </div>
   );
 }
-// ============================================================
-// TestimonialsTab — Manage student reviews
-// Approve pending, delete inappropriate ones
-// ============================================================
+
+// ---- Testimonials Tab ----
 function TestimonialsTab({ showToast }) {
   const [testimonials, setTestimonials] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchAll();
-  }, []);
+  useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
     try {
       const response = await fetch("/api/admin/testimonials", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-        },
+        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
       });
       const data = await response.json();
       setTestimonials(data.testimonials || []);
@@ -1162,15 +1287,11 @@ function TestimonialsTab({ showToast }) {
     try {
       await fetch(`/api/admin/testimonials/${id}/approve`, {
         method: "PUT",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-        },
+        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
       });
       showToast("Review approved and published! ✅");
       fetchAll();
-    } catch {
-      showToast("Failed to approve", "error");
-    }
+    } catch { showToast("Failed to approve", "error"); }
   };
 
   const remove = async (id) => {
@@ -1178,25 +1299,14 @@ function TestimonialsTab({ showToast }) {
     try {
       await fetch(`/api/admin/testimonials/${id}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-        },
+        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
       });
       showToast("Review deleted");
       fetchAll();
-    } catch {
-      showToast("Failed to delete", "error");
-    }
+    } catch { showToast("Failed to delete", "error"); }
   };
 
-  if (loading) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <div className="text-4xl mb-3">⏳</div>
-        Loading reviews...
-      </div>
-    );
-  }
+  if (loading) return <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-3">⏳</div>Loading reviews...</div>;
 
   const pending = testimonials.filter((t) => !t.approved);
   const approved = testimonials.filter((t) => t.approved);
@@ -1206,18 +1316,15 @@ function TestimonialsTab({ showToast }) {
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-display text-2xl font-black">Student Reviews</h2>
         <div className="flex gap-3 text-sm">
-          <span className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-400
-            px-3 py-1 rounded-full text-xs font-medium">
+          <span className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full text-xs font-medium">
             ⏳ {pending.length} pending
           </span>
-          <span className="bg-green-500/10 border border-green-500/20 text-green-400
-            px-3 py-1 rounded-full text-xs font-medium">
+          <span className="bg-green-500/10 border border-green-500/20 text-green-400 px-3 py-1 rounded-full text-xs font-medium">
             ✅ {approved.length} published
           </span>
         </div>
       </div>
 
-      {/* ---- Pending reviews ---- */}
       {pending.length > 0 && (
         <div className="mb-8">
           <h3 className="font-display font-bold text-base mb-4 flex items-center gap-2">
@@ -1226,52 +1333,34 @@ function TestimonialsTab({ showToast }) {
           </h3>
           <div className="space-y-4">
             {pending.map((t) => (
-              <div key={t._id} className="bg-yellow-500/4 border border-yellow-500/15
-                rounded-2xl p-5">
+              <div key={t._id} className="bg-yellow-500/4 border border-yellow-500/15 rounded-2xl p-5">
                 <div className="flex justify-between items-start gap-4 mb-3 flex-wrap">
                   <div>
                     <div className="font-display font-bold">{t.name}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
-                      {t.email}
-                      {t.college && ` · ${t.college}`}
-                      {t.year && ` · ${t.year}`}
+                      {t.email}{t.college && ` · ${t.college}`}{t.year && ` · ${t.year}`}
                     </div>
                     <div className="flex items-center gap-3 mt-2">
-                      <span className="text-yellow-400 text-sm">
-                        {"★".repeat(t.rating)}{"☆".repeat(5 - t.rating)}
-                      </span>
-                      <span className="bg-white/6 text-gray-300 text-xs px-2 py-0.5 rounded-md">
-                        {t.domain}
-                      </span>
+                      <span className="text-yellow-400 text-sm">{"★".repeat(t.rating)}{"☆".repeat(5 - t.rating)}</span>
+                      <span className="bg-white/6 text-gray-300 text-xs px-2 py-0.5 rounded-md">{t.domain}</span>
                     </div>
                   </div>
                   <div className="text-xs text-gray-500 flex-shrink-0">
-                    {new Date(t.createdAt).toLocaleDateString("en-IN", {
-                      day: "numeric", month: "short", year: "numeric"
-                    })}
+                    {new Date(t.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                   </div>
                 </div>
-
-                <blockquote className="text-gray-300 text-sm italic leading-relaxed
-                  border-l-2 border-yellow-500/30 pl-3 mb-4">
+                <blockquote className="text-gray-300 text-sm italic leading-relaxed border-l-2 border-yellow-500/30 pl-3 mb-4">
                   "{t.text}"
                 </blockquote>
-
                 <div className="flex gap-3 flex-wrap">
-                  <button
-                    onClick={() => approve(t._id)}
+                  <button onClick={() => approve(t._id)}
                     className="bg-green-500/15 border border-green-500/30 text-green-400
-                      px-5 py-2 rounded-xl text-xs font-display font-bold
-                      hover:bg-green-500/25 transition-all"
-                  >
+                      px-5 py-2 rounded-xl text-xs font-display font-bold hover:bg-green-500/25 transition-all">
                     ✓ Approve & Publish
                   </button>
-                  <button
-                    onClick={() => remove(t._id)}
+                  <button onClick={() => remove(t._id)}
                     className="bg-red-500/8 border border-red-500/20 text-red-400
-                      px-5 py-2 rounded-xl text-xs font-display font-bold
-                      hover:bg-red-500/15 transition-all"
-                  >
+                      px-5 py-2 rounded-xl text-xs font-display font-bold hover:bg-red-500/15 transition-all">
                     ✕ Delete
                   </button>
                 </div>
@@ -1281,32 +1370,21 @@ function TestimonialsTab({ showToast }) {
         </div>
       )}
 
-      {/* ---- No pending ---- */}
       {pending.length === 0 && (
-        <div className="mb-8 p-5 bg-green-500/4 border border-green-500/15 rounded-2xl
-          text-center text-green-400 text-sm">
+        <div className="mb-8 p-5 bg-green-500/4 border border-green-500/15 rounded-2xl text-center text-green-400 text-sm">
           ✅ No pending reviews — you're all caught up!
         </div>
       )}
 
-      {/* ---- Published reviews ---- */}
       <div>
         <h3 className="font-display font-bold text-base mb-4 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-green-400"></span>
           Published Reviews
         </h3>
-
         {approved.length === 0 ? (
           <div className="text-center py-10 bg-white/2 border border-white/7 rounded-2xl">
             <div className="text-4xl mb-3">⭐</div>
             <p className="text-gray-400 text-sm mb-2">No published reviews yet</p>
-            <p className="text-gray-500 text-xs">
-              Share this link with students who've had sessions with you:
-            </p>
-            <div className="mt-3 bg-white/4 border border-white/10 rounded-xl px-4 py-2
-              inline-block text-xs text-yellow-400 font-mono">
-              minicimextech.com/consultancy → "Share Your Experience" button
-            </div>
           </div>
         ) : (
           <div className="space-y-3">
@@ -1320,25 +1398,16 @@ function TestimonialsTab({ showToast }) {
                       {t.name[0].toUpperCase()}
                     </div>
                     <span className="font-semibold text-sm">{t.name}</span>
-                    <span className="text-yellow-400 text-xs">
-                      {"★".repeat(t.rating)}
-                    </span>
-                    <span className="bg-white/6 text-gray-400 text-xs px-2 py-0.5 rounded-md">
-                      {t.domain}
-                    </span>
+                    <span className="text-yellow-400 text-xs">{"★".repeat(t.rating)}</span>
+                    <span className="bg-white/6 text-gray-400 text-xs px-2 py-0.5 rounded-md">{t.domain}</span>
                   </div>
-                  {t.college && (
-                    <div className="text-xs text-gray-500 mb-1 ml-10">{t.college}</div>
-                  )}
+                  {t.college && <div className="text-xs text-gray-500 mb-1 ml-10">{t.college}</div>}
                   <p className="text-gray-400 text-xs italic ml-10 truncate">
                     "{t.text.slice(0, 120)}{t.text.length > 120 ? "..." : ""}"
                   </p>
                 </div>
-                <button
-                  onClick={() => remove(t._id)}
-                  className="text-red-400 text-xs hover:underline flex-shrink-0
-                    opacity-60 hover:opacity-100 transition-all"
-                >
+                <button onClick={() => remove(t._id)}
+                  className="text-red-400 text-xs hover:underline flex-shrink-0 opacity-60 hover:opacity-100 transition-all">
                   Delete
                 </button>
               </div>
@@ -1347,18 +1416,12 @@ function TestimonialsTab({ showToast }) {
         )}
       </div>
 
-      {/* Share tip */}
       <div className="mt-8 p-4 bg-blue-500/5 border border-blue-500/15 rounded-2xl">
-        <div className="font-display font-bold text-sm text-blue-400 mb-2">
-          💡 How to get more reviews
-        </div>
+        <div className="font-display font-bold text-sm text-blue-400 mb-2">💡 How to get more reviews</div>
         <div className="text-gray-400 text-xs leading-relaxed">
-          After each session, send your student this message:
-          <div className="mt-2 bg-white/4 border border-white/7 rounded-xl p-3
-            font-mono text-xs text-gray-300">
-            "If the session helped you, would you mind leaving a quick review?
-            It helps other students decide. Here's the link:
-            minicimextech.com/consultancy — scroll to 'Share Your Experience'"
+          After each session, share this with your student:
+          <div className="mt-2 bg-white/4 border border-white/7 rounded-xl p-3 font-mono text-xs text-gray-300">
+            "Leave a quick review at mentorshub.rajeevshivah.me — scroll to 'Share Your Experience'"
           </div>
         </div>
       </div>

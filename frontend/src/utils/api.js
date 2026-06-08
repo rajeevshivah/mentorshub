@@ -47,6 +47,13 @@ export const adminAPI = {
   toggleSlot: (id, isActive) => request("PUT", `/admin/slots/${id}`, { isActive }),
   deleteSlot: (id) => request("DELETE", `/admin/slots/${id}`),
   getStudents: () => request("GET", "/admin/students"),
+  getBlockedDates: () => request("GET", "/admin/blocked-dates"),
+  blockDate: (date, reason) => request("POST", "/admin/blocked-dates", { date, reason }),
+  blockDateRange: (startDate, endDate, reason) => request("POST", "/admin/blocked-dates/range", { startDate, endDate, reason }),
+  unblockDate: (id) => request("DELETE", `/admin/blocked-dates/${id}`),
+  cleanDatabase: (options) => request("DELETE", "/admin/clean-database", options),
+  // UPI confirmation
+  confirmUpiPayment: (id, meetLink) => request("PUT", `/bookings/${id}/confirm-upi`, { meetLink }),
 };
 
 export const testimonialAPI = {

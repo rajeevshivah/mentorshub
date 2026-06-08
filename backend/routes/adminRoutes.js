@@ -177,4 +177,89 @@ router.delete("/testimonials/:id", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+const BlockedDate = require("../models/BlockedDate");
+
+// ---- GET all blocked dates ----
+router.get("/blocked-dates", async (req, res) => {
+  try {
+    const blocked = await BlockedDate.find().sort("date");
+    res.json({ success: true, blockedDates: blocked });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---- BLOCK a single date (all slots) ----
+router.post("/blocked-dates", async (req, res) => {
+  try {
+    const { date, reason } = req.body;
+    const existing = await BlockedDate.findOne({ date });
+    if (existing) {
+      return res.status(400).json({ success: false, error: "Date already blocked" });
+    }
+    const blocked = await BlockedDate.create({ date, reason: reason || "Unavailable", allDay: true });
+    res.status(201).json({ success: true, blocked });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---- BLOCK date range (vacation mode) ----
+router.post("/blocked-dates/range", async (req, res) => {
+  try {
+    const { startDate, endDate, reason } = req.body;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const dates = [];
+
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split("T")[0];
+      const exists = await BlockedDate.findOne({ date: dateStr });
+      if (!exists) {
+        dates.push({ date: dateStr, reason: reason || "Vacation", allDay: true });
+      }
+    }
+
+    await BlockedDate.insertMany(dates);
+    res.json({ success: true, message: `Blocked ${dates.length} dates`, dates });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---- UNBLOCK a date ----
+router.delete("/blocked-dates/:id", async (req, res) => {
+  try {
+    await BlockedDate.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Date unblocked" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---- CLEAN DATABASE (delete test data) ----
+router.delete("/clean-database", async (req, res) => {
+  try {
+    const { deleteStudents, deleteBookings, deletePayments } = req.body;
+    const results = {};
+    if (deleteBookings) {
+      const b = await Booking.deleteMany({});
+      results.bookings = b.deletedCount;
+    }
+    if (deletePayments) {
+      const Payment = require("../models/Payment");
+      const p = await Payment.deleteMany({});
+      results.payments = p.deletedCount;
+    }
+    if (deleteStudents) {
+      const User = require("../models/User");
+      const u = await User.deleteMany({ role: "student" });
+      results.students = u.deletedCount;
+    }
+    res.json({ success: true, deleted: results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 module.exports = router;
