@@ -175,6 +175,37 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
   const pkg = PACKAGES.find((p) => p.id === selectedPkg) || PACKAGES[1];
   const inputClass = "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-yellow-500/50 outline-none text-sm transition-colors";
 // ---- UPI booking handler ----
+// const handleUpiBooking = async () => {
+//   if (!user) {
+//     showToast("Please login first", "error");
+//     return;
+//   }
+//   if (!upiTransactionId.trim()) {
+//     showToast("Please enter your UPI transaction ID", "error");
+//     return;
+//   }
+//   setPayLoading(true);
+//   try {
+//     await bookingAPI.create({
+//       packageId: String(pkg.id),
+//       packageName: pkg.name,
+//       packagePrice: pkg.price,
+//       packageDuration: pkg.duration,
+//       date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
+//       timeSlot: selectedSlot,
+//       studentInfo: form,
+//       paymentMethod: "upi",
+//       upiTransactionId: upiTransactionId.trim(),
+//       meetLink: null,
+//     });
+//     showToast("Booking submitted! You'll get an email within 2 hours 🎉");
+//     setPage("dashboard");
+//   } catch (err) {
+//     showToast(err.message || "Something went wrong", "error");
+//   } finally {
+//     setPayLoading(false);
+//   }
+// };
 const handleUpiBooking = async () => {
   if (!user) {
     showToast("Please login first", "error");
@@ -198,11 +229,14 @@ const handleUpiBooking = async () => {
       upiTransactionId: upiTransactionId.trim(),
       meetLink: null,
     });
-    showToast("Booking submitted! You'll get an email within 2 hours 🎉");
-    setPage("dashboard");
+    showToast("Booking submitted! You'll get a confirmation email within 2 hours 🎉");
+    // Small delay before navigation
+    setTimeout(() => {
+      setPayLoading(false);
+      setPage("dashboard");
+    }, 1000);
   } catch (err) {
     showToast(err.message || "Something went wrong", "error");
-  } finally {
     setPayLoading(false);
   }
 };

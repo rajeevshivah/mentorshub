@@ -78,22 +78,51 @@ exports.cancelBooking = async (req, res) => {
 };
 
 // ---- Admin: Confirm UPI payment ----
+// exports.confirmUpiBooking = async (req, res) => {
+//   try {
+//     const booking = await Booking.findById(req.params.id);
+//     if (!booking) return res.status(404).json({ success: false, error: "Booking not found" });
+//     if (booking.status !== "pending_upi") {
+//       return res.status(400).json({ success: false, error: "Booking is not pending UPI confirmation" });
+//     }
+//     booking.status = "confirmed";
+//     booking.meetLink = req.body.meetLink || "https://meet.google.com/mentorshub-session";
+//     await booking.save();
+
+//     // Send confirmation email to student
+//     await sendUpiConfirmedEmail(booking.studentInfo.email, booking);
+
+//     res.json({ success: true, booking });
+//   } catch (err) {
+//     res.status(500).json({ success: false, error: err.message });
+//   }
+// };
 exports.confirmUpiBooking = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
-    if (!booking) return res.status(404).json({ success: false, error: "Booking not found" });
-    if (booking.status !== "pending_upi") {
-      return res.status(400).json({ success: false, error: "Booking is not pending UPI confirmation" });
+    if (!booking) {
+      return res.status(404).json({ success: false, error: "Booking not found" });
     }
+    if (booking.status !== "pending_upi") {
+      return res.status(400).json({ success: false, error: "Booking is not pending UPI" });
+    }
+
     booking.status = "confirmed";
     booking.meetLink = req.body.meetLink || "https://meet.google.com/mentorshub-session";
     await booking.save();
 
-    // Send confirmation email to student
-    await sendUpiConfirmedEmail(booking.studentInfo.email, booking);
+    // Send confirmation email
+    try {
+      await sendUpiConfirmedEmail(booking.studentInfo.email, booking);
+      console.log("✅ UPI confirmation email sent to:", booking.studentInfo.email);
+    } catch (emailErr) {
+      console.error("❌ Email error:", emailErr.message);
+      // Don't fail the request if email fails
+    }
 
     res.json({ success: true, booking });
   } catch (err) {
+    console.error("❌ Confirm UPI error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 };

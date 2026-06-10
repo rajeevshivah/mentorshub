@@ -163,30 +163,55 @@ export default function AdminPage({ setPage }) {
   };
 
   // ---- Confirm UPI payment ----
+  // const confirmUpiPayment = async () => {
+  //   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
+  //   try {
+  //     const response = await fetch(
+  //       `${import.meta.env.VITE_API_URL}/bookings/${meetModal}/confirm-upi`,
+  //       {
+  //         method: "PUT",
+  //         headers: {
+  //           "Content-Type": "application/json",
+  //           Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
+  //         },
+  //         body: JSON.stringify({ meetLink: link }),
+  //       }
+  //     );
+  //     const data = await response.json();
+  //     if (!data.success) throw new Error(data.error);
+  //     showToast("Payment confirmed! Meet link sent to student ✅");
+  //     setMeetModal(null);
+  //     setMeetLinkInput("");
+  //     fetchAll();
+  //   } catch (err) {
+  //     showToast(err.message || "Failed to confirm", "error");
+  //   }
+  // };
   const confirmUpiPayment = async () => {
-    const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/bookings/${meetModal}/confirm-upi`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-          },
-          body: JSON.stringify({ meetLink: link }),
-        }
-      );
-      const data = await response.json();
-      if (!data.success) throw new Error(data.error);
-      showToast("Payment confirmed! Meet link sent to student ✅");
-      setMeetModal(null);
-      setMeetLinkInput("");
-      fetchAll();
-    } catch (err) {
-      showToast(err.message || "Failed to confirm", "error");
-    }
-  };
+  const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
+  try {
+    const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+    const response = await fetch(
+      `${apiUrl}/bookings/${meetModal}/confirm-upi`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
+        },
+        body: JSON.stringify({ meetLink: link }),
+      }
+    );
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error);
+    showToast("Payment confirmed! Meet link sent to student ✅");
+    setMeetModal(null);
+    setMeetLinkInput("");
+    fetchAll();
+  } catch (err) {
+    showToast(err.message || "Failed to confirm", "error");
+  }
+};
 
   // ---- Slot actions ----
   const addSlot = async () => {
