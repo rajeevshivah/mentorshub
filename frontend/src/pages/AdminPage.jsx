@@ -187,7 +187,32 @@ export default function AdminPage({ setPage }) {
   //     showToast(err.message || "Failed to confirm", "error");
   //   }
   // };
-  const confirmUpiPayment = async () => {
+//   const confirmUpiPayment = async () => {
+//   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
+//   try {
+//     const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+//     const response = await fetch(
+//       `${apiUrl}/bookings/${meetModal}/confirm-upi`,
+//       {
+//         method: "PUT",
+//         headers: {
+//           "Content-Type": "application/json",
+//           Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
+//         },
+//         body: JSON.stringify({ meetLink: link }),
+//       }
+//     );
+//     const data = await response.json();
+//     if (!data.success) throw new Error(data.error);
+//     showToast("Payment confirmed! Meet link sent to student ✅");
+//     setMeetModal(null);
+//     setMeetLinkInput("");
+//     fetchAll();
+//   } catch (err) {
+//     showToast(err.message || "Failed to confirm", "error");
+//   }
+// };
+const confirmUpiPayment = async () => {
   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
   try {
     const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -207,9 +232,18 @@ export default function AdminPage({ setPage }) {
     showToast("Payment confirmed! Meet link sent to student ✅");
     setMeetModal(null);
     setMeetLinkInput("");
-    fetchAll();
+    // Force refresh data
+    await fetchAll();
   } catch (err) {
-    showToast(err.message || "Failed to confirm", "error");
+    // If error says "not pending UPI" it means it already worked!
+    if (err.message.includes("not pending UPI")) {
+      showToast("Already confirmed! ✅");
+      setMeetModal(null);
+      setMeetLinkInput("");
+      await fetchAll();
+    } else {
+      showToast(err.message || "Failed to confirm", "error");
+    }
   }
 };
 
