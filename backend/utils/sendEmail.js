@@ -3,9 +3,10 @@ const nodemailer = require("nodemailer");
 const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;background:#0b0f1a;color:#e8eaf0;padding:40px;border-radius:16px`;
 const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
 
+
 const getTransporter = () => nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 587,
+  host: process.env.EMAIL_HOST || "smtp-relay.brevo.com",
+  port: Number(process.env.EMAIL_PORT) || 587,
   secure: false,
   auth: {
     user: process.env.EMAIL_USER,
@@ -54,6 +55,9 @@ const sendBookingConfirmation = async (email, booking) => {
 
 // ---- UPI payment pending ----
 const sendUpiPendingEmail = async (email, booking) => {
+  console.log("📧 Attempting to send UPI pending email to:", email);
+  console.log("📧 Using SMTP:", process.env.EMAIL_HOST, process.env.EMAIL_PORT, process.env.EMAIL_USER);
+  
   try {
     await getTransporter().sendMail({
       from: `"MentorHub by Rajeev Shivah" <rajeev@rajeevshivah.me>`,
