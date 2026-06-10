@@ -1,22 +1,24 @@
 const nodemailer = require("nodemailer");
 
-const transporter = nodemailer.createTransport({
+const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;background:#0b0f1a;color:#e8eaf0;padding:40px;border-radius:16px`;
+const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
+
+// Create transporter fresh each time to pick up latest env vars
+const getTransporter = () => nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
+  port: parseInt(process.env.EMAIL_PORT),
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
 
-const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;background:#0b0f1a;color:#e8eaf0;padding:40px;border-radius:16px`;
-const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
-
 // ---- Booking confirmed (Razorpay) ----
 const sendBookingConfirmation = async (email, booking) => {
   try {
-    await transporter.sendMail({
-      from: `"MentorHub by Rajeev Shivah" <${process.env.EMAIL_USER}>`,
+    await getTransporter().sendMail({
+      from: `"MentorHub by Rajeev Shivah" <rajeev@rajeevshivah.me>`,
       to: email,
       subject: `✅ Booking Confirmed — ${booking.packageName}`,
       html: `
@@ -51,11 +53,11 @@ const sendBookingConfirmation = async (email, booking) => {
   }
 };
 
-// ---- UPI payment pending — waiting for admin confirmation ----
+// ---- UPI payment pending ----
 const sendUpiPendingEmail = async (email, booking) => {
   try {
-    await transporter.sendMail({
-      from: `"MentorHub by Rajeev Shivah" <${process.env.EMAIL_USER}>`,
+    await getTransporter().sendMail({
+      from: `"MentorHub by Rajeev Shivah" <rajeev@rajeevshivah.me>`,
       to: email,
       subject: `⏳ Booking Received — Payment Verification Pending`,
       html: `
@@ -86,8 +88,8 @@ const sendUpiPendingEmail = async (email, booking) => {
 // ---- UPI payment confirmed by admin ----
 const sendUpiConfirmedEmail = async (email, booking) => {
   try {
-    await transporter.sendMail({
-      from: `"MentorHub by Rajeev Shivah" <${process.env.EMAIL_USER}>`,
+    await getTransporter().sendMail({
+      from: `"MentorHub by Rajeev Shivah" <rajeev@rajeevshivah.me>`,
       to: email,
       subject: `✅ Payment Verified — Session Confirmed!`,
       html: `
@@ -124,8 +126,8 @@ const sendUpiConfirmedEmail = async (email, booking) => {
 // ---- Reminder (1 hour before) ----
 const sendReminder = async (email, booking) => {
   try {
-    await transporter.sendMail({
-      from: `"MentorHub" <${process.env.EMAIL_USER}>`,
+    await getTransporter().sendMail({
+      from: `"MentorHub" <rajeev@rajeevshivah.me>`,
       to: email,
       subject: `⏰ Reminder: Your session starts in 1 hour!`,
       html: `
