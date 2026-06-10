@@ -3,17 +3,13 @@ const nodemailer = require("nodemailer");
 const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;background:#0b0f1a;color:#e8eaf0;padding:40px;border-radius:16px`;
 const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
 
-// Create transporter fresh each time to pick up latest env vars
 const getTransporter = () => nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT),
+  host: "smtp-relay.brevo.com",
+  port: 587,
   secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
   },
 });
 
