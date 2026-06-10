@@ -4,23 +4,10 @@ const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;back
 const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
 
 // Create transporter fresh each time to pick up latest env vars
-// const getTransporter = () => nodemailer.createTransport({
-//   host: process.env.EMAIL_HOST,
-//   port: parseInt(process.env.EMAIL_PORT),
-//   secure: false,
-//   auth: {
-//     user: process.env.EMAIL_USER,
-//     pass: process.env.EMAIL_PASS,
-//   },
-// });
-
 const getTransporter = () => nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: parseInt(process.env.EMAIL_PORT),
   secure: false,
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
