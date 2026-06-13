@@ -154,14 +154,13 @@
 
 // module.exports = { sendBookingConfirmation, sendUpiPendingEmail, sendUpiConfirmedEmail, sendReminder };
 
-const Brevo = require("@getbrevo/brevo");
+const brevo = require("@getbrevo/brevo");
 
-const client = Brevo.ApiClient.instance;
-client.authentications["api-key"].apiKey = process.env.BREVO_API_KEY;
-const apiInstance = new Brevo.TransactionalEmailsApi();
+const apiInstance = new brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
 
 const sendEmail = async (to, subject, htmlContent) => {
-  const email = new Brevo.SendSmtpEmail();
+  const email = new brevo.SendSmtpEmail();
   email.sender = { name: "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" };
   email.to = [{ email: to }];
   email.subject = subject;
