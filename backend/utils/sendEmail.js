@@ -154,18 +154,29 @@
 
 // module.exports = { sendBookingConfirmation, sendUpiPendingEmail, sendUpiConfirmedEmail, sendReminder };
 
-const brevo = require("@getbrevo/brevo");
-
-const apiInstance = new brevo.TransactionalEmailsApi();
-apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
 const sendEmail = async (to, subject, htmlContent) => {
-  const email = new brevo.SendSmtpEmail();
-  email.sender = { name: "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" };
-  email.to = [{ email: to }];
-  email.subject = subject;
-  email.htmlContent = htmlContent;
-  await apiInstance.sendTransacEmail(email);
+  const response = await fetch(BREVO_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { name: "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" },
+      to: [{ email: to }],
+      subject,
+      htmlContent,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Brevo API error: ${response.status} ${errText}`);
+  }
+
   console.log(`✅ Email sent to ${to}`);
 };
 
