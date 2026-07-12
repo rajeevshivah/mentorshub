@@ -3,9 +3,9 @@
 // Credibility-first design, real information, no fake stats
 // ============================================================
 import { useState, useEffect } from "react";
-import { testimonialAPI } from "../utils/api";
+import { testimonialAPI, packageAPI } from "../utils/api";
 import { useToast } from "../context/ToastContext";
-import { PACKAGES, FAQS } from "../data/constants";
+import { FAQS } from "../data/constants";
 import PackageCard from "../components/PackageCard";
 import Footer from "../components/Footer";
 import TestimonialForm from "../components/TestimonialForm";
@@ -53,12 +53,16 @@ const WHY_POINTS = [
 export default function HomePage({ onBook }) {
   const { showToast } = useToast();
   const [testimonials, setTestimonials] = useState([]);
+  const [packages, setPackages] = useState([]);
   const [showTestimonialForm, setShowTestimonialForm] = useState(false);
   const [openFaq, setOpenFaq] = useState(-1);
   const [testimonialsLoading, setTestimonialsLoading] = useState(true);
 
   useEffect(() => {
     fetchTestimonials();
+    packageAPI.getActive("tech")
+      .then((res) => setPackages(res.packages || []))
+      .catch(() => setPackages([]));
   }, []);
 
   const fetchTestimonials = async () => {
@@ -335,8 +339,8 @@ export default function HomePage({ onBook }) {
           No templates. No generic advice.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {PACKAGES.map((pkg) => (
-            <PackageCard key={pkg.id} pkg={pkg} onBook={onBook} />
+          {packages.map((pkg) => (
+            <PackageCard key={pkg._id} pkg={pkg} onBook={onBook} />
           ))}
         </div>
 

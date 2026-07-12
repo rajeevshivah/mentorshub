@@ -4,11 +4,16 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { adminAPI } from "../utils/api";
+import { adminAPI, testimonialAPI } from "../utils/api";
+import PackagesTab from "../components/PackagesTab";
+import RescheduleModal from "../components/RescheduleModal";
+import NotificationBell from "../components/NotificationBell";
+import ConfirmModal from "../components/ConfirmModal";
 
 const TABS = [
   { id: "overview", icon: "📊", label: "Overview" },
   { id: "bookings", icon: "📋", label: "Bookings" },
+  { id: "packages", icon: "📦", label: "Packages" },
   { id: "slots", icon: "🕐", label: "Slots" },
   { id: "payments", icon: "💰", label: "Payments" },
   { id: "students", icon: "👥", label: "Students" },
@@ -38,11 +43,12 @@ const PACKAGES_LIST = [
 ];
 
 export default function AdminPage({ setPage }) {
-  const { user } = useAuth();
+  const { user, bootstrapping } = useAuth();
   const { showToast } = useToast();
 
   const [tab, setTab] = useState("overview");
   const [loading, setLoading] = useState(true);
+  const [confirmState, setConfirmState] = useState(null);   // ConfirmModal
 
   // ---- Data ----
   const [stats, setStats] = useState(null);
@@ -56,6 +62,8 @@ export default function AdminPage({ setPage }) {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
+  const [bookingsPage, setBookingsPage] = useState(1);
+  const BOOKINGS_PER_PAGE = 20;
 
   // ---- Slot management ----
   const [newSlotTime, setNewSlotTime] = useState("");
@@ -75,28 +83,40 @@ export default function AdminPage({ setPage }) {
   const [emailBody, setEmailBody] = useState("");
   const [sendingEmail, setSendingEmail] = useState(false);
   const [meetModal, setMeetModal] = useState(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState(null);
+  const [respondTarget, setRespondTarget] = useState(null);  // { booking, decision }
+  const [respondText, setRespondText] = useState("");
   const [meetLinkInput, setMeetLinkInput] = useState("");
 
-  // ---- Guard ----
-  if (!user || user.role !== "admin") {
-    return (
-      <div className="max-w-md mx-auto px-6 py-24 text-center">
-        <div className="text-6xl mb-6">🔒</div>
-        <h2 className="font-display text-2xl font-black mb-3">Admin Access Only</h2>
-        <p className="text-gray-400 text-sm mb-8">You need admin privileges to view this page.</p>
-        <button onClick={() => setPage("home")}
-          className="bg-gradient-to-r from-yellow-500 to-yellow-300 text-black font-display font-bold px-8 py-3 rounded-xl">
-          Go to Home
-        </button>
-      </div>
-    );
-  }
+  // ---- Data loading ----
+  // IMPORTANT: no early returns above this point. The old code put the
+  // admin guard between useState and useEffect, which broke React's
+  // Rules of Hooks and white-screened the page whenever `user` changed
+  // (e.g. right after login or session restore). All guards now live
+  // AFTER every hook, further down.
+  //
+  // Also: waits for session restore (bootstrapping), silently refreshes
+  // every 60s and on window focus so notifications and bookings stay
+  // current without a manual reload.
+  useEffect(() => {
+    if (bootstrapping || !user || user.role !== "admin") return;
+    fetchAll();
+    const interval = setInterval(() => fetchAll(true), 60000);
+    const onFocus = () => fetchAll(true);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootstrapping, user?.id]);
 
-  useEffect(() => { fetchAll(); }, []);
+  // Jump back to page 1 whenever a booking filter changes.
+  useEffect(() => { setBookingsPage(1); }, [filterStatus, filterDate, filterSearch]);
 
-  // ---- FIX 1: properly destructure all 6 results ----
-  const fetchAll = async () => {
-    setLoading(true);
+  // silent=true skips the full-page loader (used by background refresh)
+  const fetchAll = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [s, b, p, sl, st, bd] = await Promise.all([
         adminAPI.getStats(),
@@ -113,17 +133,93 @@ export default function AdminPage({ setPage }) {
       setStudents(st.students);
       setBlockedDates(bd.blockedDates);
     } catch (err) {
-      showToast("Failed to load admin data", "error");
+      if (!silent) showToast("Failed to load admin data", "error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // ---- Guards (safe here: every hook above has already run) ----
+  if (bootstrapping) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-400 text-sm">
+        Loading…
+      </div>
+    );
+  }
+  if (!user || user.role !== "admin") {
+    return (
+      <div className="max-w-md mx-auto px-6 py-24 text-center">
+        <div className="text-6xl mb-6">🔒</div>
+        <h2 className="font-display text-2xl font-black mb-3">Admin Access Only</h2>
+        <p className="text-gray-400 text-sm mb-8">You need admin privileges to view this page.</p>
+        <button onClick={() => setPage("home")}
+          className="bg-gradient-to-r from-yellow-500 to-yellow-300 text-black font-display font-bold px-8 py-3 rounded-xl">
+          Go to Home
+        </button>
+      </div>
+    );
+  }
 
   // ---- Booking actions ----
   const updateBookingStatus = async (id, status) => {
     try {
       await adminAPI.updateBooking(id, { status });
       showToast(`Booking marked as ${status}`);
+      fetchAll();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+
+  // Asks for confirmation before cancelling / completing a booking.
+  // Prevents accidental one-tap status changes (easy to mis-tap on mobile).
+  const requestStatusUpdate = (id, status, studentName = "this student") => {
+    const isCancel = status === "cancelled";
+    setConfirmState({
+      title: isCancel ? "Cancel this booking?" : "Mark session as completed?",
+      message: isCancel
+        ? `${studentName}'s booking will be cancelled and they will be notified by email. This cannot be undone.`
+        : `${studentName}'s session will be marked completed. They will no longer be able to reschedule it.`,
+      confirmLabel: isCancel ? "Yes, cancel booking" : "Yes, mark completed",
+      tone: isCancel ? "danger" : "primary",
+      onConfirm: () => updateBookingStatus(id, status),
+    });
+  };
+
+  const handleAdminReschedule = async (date, timeSlot) => {
+    await adminAPI.rescheduleBooking(rescheduleTarget._id, date, timeSlot);
+    showToast("Booking rescheduled — student notified");
+    setRescheduleTarget(null);
+    fetchAll();
+  };
+
+  const submitRescheduleResponse = async () => {
+    try {
+      await adminAPI.respondReschedule(respondTarget.booking._id, respondTarget.decision, respondText);
+      showToast(respondTarget.decision === "accept" ? "Reschedule accepted" : "Reschedule rejected");
+      setRespondTarget(null);
+      setRespondText("");
+      fetchAll();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleAddResource = async (bookingId, title, url, type) => {
+    try {
+      await adminAPI.addResource(bookingId, title, url, type);
+      showToast("Resource added");
+      fetchAll();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleRemoveResource = async (bookingId, resourceId) => {
+    try {
+      await adminAPI.removeResource(bookingId, resourceId);
+      showToast("Resource removed");
       fetchAll();
     } catch (err) {
       showToast(err.message, "error");
@@ -150,7 +246,7 @@ export default function AdminPage({ setPage }) {
     }
     setSendingEmail(true);
     try {
-      await adminAPI.sendNote(emailModal.bookingId, `EMAIL: ${emailSubject}\n\n${emailBody}`);
+      await adminAPI.sendEmailToStudent(emailModal.bookingId, emailSubject, emailBody);
       showToast(`Email sent to ${emailModal.email}!`);
       setEmailModal(null);
       setEmailSubject("");
@@ -163,55 +259,6 @@ export default function AdminPage({ setPage }) {
   };
 
   // ---- Confirm UPI payment ----
-  // const confirmUpiPayment = async () => {
-  //   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
-  //   try {
-  //     const response = await fetch(
-  //       `${import.meta.env.VITE_API_URL}/bookings/${meetModal}/confirm-upi`,
-  //       {
-  //         method: "PUT",
-  //         headers: {
-  //           "Content-Type": "application/json",
-  //           Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-  //         },
-  //         body: JSON.stringify({ meetLink: link }),
-  //       }
-  //     );
-  //     const data = await response.json();
-  //     if (!data.success) throw new Error(data.error);
-  //     showToast("Payment confirmed! Meet link sent to student ✅");
-  //     setMeetModal(null);
-  //     setMeetLinkInput("");
-  //     fetchAll();
-  //   } catch (err) {
-  //     showToast(err.message || "Failed to confirm", "error");
-  //   }
-  // };
-//   const confirmUpiPayment = async () => {
-//   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
-//   try {
-//     const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-//     const response = await fetch(
-//       `${apiUrl}/bookings/${meetModal}/confirm-upi`,
-//       {
-//         method: "PUT",
-//         headers: {
-//           "Content-Type": "application/json",
-//           Authorization: `Bearer ${localStorage.getItem("mentorToken")}`,
-//         },
-//         body: JSON.stringify({ meetLink: link }),
-//       }
-//     );
-//     const data = await response.json();
-//     if (!data.success) throw new Error(data.error);
-//     showToast("Payment confirmed! Meet link sent to student ✅");
-//     setMeetModal(null);
-//     setMeetLinkInput("");
-//     fetchAll();
-//   } catch (err) {
-//     showToast(err.message || "Failed to confirm", "error");
-//   }
-// };
 const confirmUpiPayment = async () => {
   const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
   try {
@@ -270,15 +317,22 @@ const confirmUpiPayment = async () => {
     }
   };
 
-  const deleteSlot = async (id) => {
-    if (!confirm("Remove this slot permanently?")) return;
-    try {
-      await adminAPI.deleteSlot(id);
-      showToast("Slot removed");
-      fetchAll();
-    } catch (err) {
-      showToast(err.message, "error");
-    }
+  const deleteSlot = (id, time) => {
+    setConfirmState({
+      title: "Remove this time slot?",
+      message: `${time ? `The ${time} slot` : "This slot"} will be removed permanently. Existing bookings are not affected, but students can no longer book this time.`,
+      confirmLabel: "Remove slot",
+      tone: "danger",
+      onConfirm: async () => {
+        try {
+          await adminAPI.deleteSlot(id);
+          showToast("Slot removed");
+          fetchAll();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      },
+    });
   };
 
   const toggleDay = (day) => {
@@ -288,6 +342,15 @@ const confirmUpiPayment = async () => {
   };
 
   // ---- CSV Export ----
+  // Every field is quoted (handles commas/quotes/newlines in names,
+  // packages, addresses) and fields starting with = + - @ are prefixed
+  // with ' to block Excel formula injection.
+  const csvField = (v) => {
+    let s = String(v ?? "");
+    if (/^[=+\-@]/.test(s)) s = "'" + s;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+
   const exportCSV = () => {
     const headers = ["Student","Email","Phone","Package","Date","Time","Amount","Status","Payment Method","Transaction ID"];
     const rows = filteredBookings.map(b => [
@@ -302,7 +365,7 @@ const confirmUpiPayment = async () => {
       b.paymentMethod || "razorpay",
       b.upiTransactionId || "—",
     ]);
-    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
+    const csv = [headers, ...rows].map(r => r.map(csvField).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -325,6 +388,15 @@ const confirmUpiPayment = async () => {
       b.packageName.toLowerCase().includes(filterSearch.toLowerCase());
     return matchStatus && matchDate && matchSearch;
   });
+
+  // ---- Pagination (bookings tab) ----
+  // Keeps the DOM light once bookings grow into the hundreds.
+  const totalBookingPages = Math.max(1, Math.ceil(filteredBookings.length / BOOKINGS_PER_PAGE));
+  const safeBookingsPage = Math.min(bookingsPage, totalBookingPages);
+  const pagedBookings = filteredBookings.slice(
+    (safeBookingsPage - 1) * BOOKINGS_PER_PAGE,
+    safeBookingsPage * BOOKINGS_PER_PAGE
+  );
 
   // ---- Analytics ----
   const packageCounts = PACKAGES_LIST.map(pkg => ({
@@ -396,7 +468,34 @@ const confirmUpiPayment = async () => {
 
       {/* ---- Main Content ---- */}
       <div className="flex-1 md:ml-56 overflow-y-auto pb-20 md:pb-8">
+        {/* Mobile-only top bar: brand + back to site */}
+        <div className="md:hidden sticky top-0 z-30 bg-dark/90 backdrop-blur-xl border-b border-white/7 px-4 h-14 flex items-center justify-between">
+          <div className="font-display font-black text-sm text-yellow-400">ADMIN PANEL</div>
+          <button onClick={() => setPage("home")}
+            className="text-xs text-gray-300 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 hover:bg-white/10">
+            ← Back to Site
+          </button>
+        </div>
         <div className="p-6 md:p-8 max-w-6xl mx-auto">
+          {/* Top bar with notifications */}
+          <div className="flex justify-end mb-4">
+            <NotificationBell storageKey="mh_notif_admin" items={(() => {
+              const n = [];
+              const pendingUpi = bookings.filter(b => b.status === "pending_upi");
+              const reschedReqs = bookings.filter(b => b.rescheduleRequest?.status === "pending");
+              reschedReqs.forEach(b => n.push({
+                id: `rr-${b._id}`, icon: "🔄", tone: "warning",
+                text: `${b.studentInfo?.name || "A student"} requested to reschedule ${b.packageName} → ${b.rescheduleRequest.requestedDate}, ${b.rescheduleRequest.requestedSlot}.`,
+                onClick: () => setTab("bookings"),
+              }));
+              pendingUpi.forEach(b => n.push({
+                id: `pu-${b._id}`, icon: "🕐", tone: "info",
+                text: `${b.studentInfo?.name || "A student"}'s ${b.packageName} UPI payment awaits confirmation.`,
+                onClick: () => setTab("bookings"),
+              }));
+              return n;
+            })()} />
+          </div>
           {loading ? (
             <div className="text-center py-24 text-gray-400">
               <div className="text-5xl mb-4">⏳</div>
@@ -471,7 +570,7 @@ const confirmUpiPayment = async () => {
                   </div>
                   <BookingTable
                     bookings={bookings.slice(0, 5)}
-                    onStatusUpdate={updateBookingStatus}
+                    onStatusUpdate={requestStatusUpdate}
                     onNote={(id) => { setNoteModal(id); setNoteText(""); }}
                     onEmail={(b) => setEmailModal({
                       bookingId: b._id,
@@ -479,6 +578,10 @@ const confirmUpiPayment = async () => {
                       name: b.user?.name || b.studentInfo?.name,
                     })}
                     onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
+                    onReschedule={(bk) => setRescheduleTarget(bk)}
+                    onRespondReschedule={(bk, decision) => setRespondTarget({ booking: bk, decision })}
+                    onAddResource={handleAddResource}
+                    onRemoveResource={handleRemoveResource}
                   />
                 </div>
               )}
@@ -543,12 +646,12 @@ const confirmUpiPayment = async () => {
                       No bookings match your filters
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {filteredBookings.map((b) => (
+                    <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+                      {pagedBookings.map((b) => (
                         <BookingCard
                           key={b._id}
                           booking={b}
-                          onStatusUpdate={updateBookingStatus}
+                          onStatusUpdate={requestStatusUpdate}
                           onNote={(id, existing) => { setNoteModal(id); setNoteText(existing || ""); }}
                           onEmail={(b) => {
                             setEmailModal({
@@ -560,8 +663,35 @@ const confirmUpiPayment = async () => {
                             setEmailBody("");
                           }}
                           onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
+                    onReschedule={(bk) => setRescheduleTarget(bk)}
+                    onRespondReschedule={(bk, decision) => setRespondTarget({ booking: bk, decision })}
+                    onAddResource={handleAddResource}
+                    onRemoveResource={handleRemoveResource}
                         />
                       ))}
+
+                      {/* ---- Pager ---- */}
+                      {totalBookingPages > 1 && (
+                        <div className="flex items-center justify-center gap-3 pt-2 pb-1">
+                          <button
+                            onClick={() => setBookingsPage(p => Math.max(1, p - 1))}
+                            disabled={safeBookingsPage === 1}
+                            className="px-3 py-1.5 rounded-lg border border-white/10 text-xs text-gray-300
+                              hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                            ← Prev
+                          </button>
+                          <span className="text-xs text-gray-400">
+                            Page <span className="text-white font-medium">{safeBookingsPage}</span> of {totalBookingPages}
+                          </span>
+                          <button
+                            onClick={() => setBookingsPage(p => Math.min(totalBookingPages, p + 1))}
+                            disabled={safeBookingsPage === totalBookingPages}
+                            className="px-3 py-1.5 rounded-lg border border-white/10 text-xs text-gray-300
+                              hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                            Next →
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -698,17 +828,24 @@ const confirmUpiPayment = async () => {
                         ))}
                       </div>
                       <button
-                        onClick={async () => {
+                        onClick={() => {
                           if (!Object.values(cleanOptions).some(Boolean)) {
                             showToast("Select at least one option", "error"); return;
                           }
-                          if (!confirm("⚠️ This cannot be undone! Are you sure?")) return;
-                          try {
-                            const result = await adminAPI.cleanDatabase(cleanOptions);
-                            showToast(`Cleaned: ${JSON.stringify(result.deleted)}`);
-                            setCleanOptions({});
-                            fetchAll();
-                          } catch (err) { showToast(err.message, "error"); }
+                          setConfirmState({
+                            title: "Permanently delete selected data?",
+                            message: "This wipes the selected records from the database. There is no undo and no backup.",
+                            confirmLabel: "Delete permanently",
+                            tone: "danger",
+                            onConfirm: async () => {
+                              try {
+                                const result = await adminAPI.cleanDatabase(cleanOptions);
+                                showToast(`Cleaned: ${JSON.stringify(result.deleted)}`);
+                                setCleanOptions({});
+                                fetchAll();
+                              } catch (err) { showToast(err.message, "error"); }
+                            },
+                          });
                         }}
                         className="w-full bg-red-500/15 border border-red-500/30 text-red-400
                           font-display font-bold py-2.5 rounded-xl text-sm hover:bg-red-500/25 transition-all">
@@ -739,7 +876,7 @@ const confirmUpiPayment = async () => {
                               hover:border-white/25 transition-all text-gray-400 hover:text-white">
                             {s.isActive ? "Off" : "On"}
                           </button>
-                          <button onClick={() => deleteSlot(s._id)}
+                          <button onClick={() => deleteSlot(s._id, s.time)}
                             className="text-xs border border-red-500/20 text-red-400 rounded-lg
                               px-2 py-1 hover:bg-red-500/10 transition-all">
                             ✕
@@ -978,8 +1115,12 @@ const confirmUpiPayment = async () => {
               {/* ============================================================
                   TESTIMONIALS
               ============================================================ */}
+              {tab === "packages" && (
+                <PackagesTab showToast={showToast} />
+              )}
+
               {tab === "testimonials" && (
-                <TestimonialsTab showToast={showToast} />
+                <TestimonialsTab showToast={showToast} askConfirm={setConfirmState} />
               )}
             </>
           )}
@@ -987,6 +1128,42 @@ const confirmUpiPayment = async () => {
       </div>
 
       {/* ---- Note Modal ---- */}
+      {respondTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={(e) => e.target === e.currentTarget && setRespondTarget(null)}>
+          <div className="bg-dark-2 border border-white/10 rounded-2xl p-6 w-full max-w-md">
+            <h3 className="font-display font-black text-lg mb-1">
+              {respondTarget.decision === "accept" ? "Accept reschedule" : "Reject reschedule"}
+            </h3>
+            <p className="text-gray-400 text-xs mb-4">
+              {respondTarget.booking.rescheduleRequest?.requestedDate} · {respondTarget.booking.rescheduleRequest?.requestedSlot}
+              {respondTarget.decision === "accept" ? " — the booking will move to this slot." : " — the booking stays as-is."}
+            </p>
+            <label className="text-xs text-gray-400 mb-1 block">Response to student (optional)</label>
+            <textarea rows={3} value={respondText} onChange={(e) => setRespondText(e.target.value)}
+              placeholder={respondTarget.decision === "accept" ? "e.g. Sure, see you then!" : "e.g. That slot won't work, can you try Friday?"}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-yellow-500/50 mb-4" />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRespondTarget(null)}
+                className="px-4 py-2 rounded-xl border border-white/10 text-sm hover:bg-white/5">Cancel</button>
+              <button onClick={submitRescheduleResponse}
+                className={`px-4 py-2 rounded-xl font-display font-bold text-sm text-black
+                  ${respondTarget.decision === "accept" ? "bg-green-400 hover:bg-green-300" : "bg-red-400 hover:bg-red-300"}`}>
+                {respondTarget.decision === "accept" ? "Accept & move" : "Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rescheduleTarget && (
+        <RescheduleModal
+          booking={rescheduleTarget}
+          onConfirm={handleAdminReschedule}
+          onClose={() => setRescheduleTarget(null)}
+        />
+      )}
+
       {noteModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           onClick={(e) => e.target === e.currentTarget && setNoteModal(null)}>
@@ -1104,6 +1281,9 @@ const confirmUpiPayment = async () => {
           </div>
         </div>
       )}
+
+      {/* ---- Global confirmation dialog (replaces window.confirm) ---- */}
+      <ConfirmModal state={confirmState} onClose={() => setConfirmState(null)} />
     </div>
   );
 }
@@ -1144,7 +1324,7 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi 
                 <td className="px-4 py-3">
                   <div className="flex gap-1">
                     {b.status === "confirmed" && (
-                      <button onClick={() => onStatusUpdate(b._id, "completed")} title="Mark completed"
+                      <button onClick={() => onStatusUpdate(b._id, "completed", b.user?.name || b.studentInfo?.name)} title="Mark completed"
                         className="w-7 h-7 rounded-lg bg-green-500/15 text-green-400 text-xs
                           hover:bg-green-500/25 transition-all flex items-center justify-center">✓</button>
                     )}
@@ -1171,8 +1351,10 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi 
 }
 
 // ---- Helper component: Booking Card (bookings tab) ----
-function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi }) {
+function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi, onReschedule, onRespondReschedule, onAddResource, onRemoveResource }) {
   const [expanded, setExpanded] = useState(false);
+  const [resTitle, setResTitle] = useState("");
+  const [resUrl, setResUrl] = useState("");
 
   return (
     <div className="bg-white/4 border border-white/7 rounded-2xl overflow-hidden hover:border-white/12 transition-all">
@@ -1184,9 +1366,9 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
                 font-display font-bold text-sm flex items-center justify-center flex-shrink-0">
                 {(b.user?.name || b.studentInfo?.name || "?")[0].toUpperCase()}
               </div>
-              <div>
-                <div className="font-display font-bold">{b.user?.name || b.studentInfo?.name}</div>
-                <div className="text-xs text-gray-400">{b.user?.email || b.studentInfo?.email}</div>
+              <div className="min-w-0">
+                <div className="font-display font-bold break-words">{b.user?.name || b.studentInfo?.name}</div>
+                <div className="text-xs text-gray-400 break-all">{b.user?.email || b.studentInfo?.email}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-3 text-sm text-gray-300">
@@ -1207,19 +1389,47 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
           </div>
         </div>
 
+        {/* Reschedule request awaiting admin decision */}
+        {b.rescheduleRequest?.status === "pending" && (
+          <div className="mt-4 p-4 bg-orange-500/10 border border-orange-500/25 rounded-xl">
+            <div className="text-orange-300 text-xs font-bold mb-1">🔄 Reschedule requested</div>
+            <div className="text-sm text-gray-200">
+              {b.date} · {b.timeSlot} → <strong className="text-orange-300">{b.rescheduleRequest.requestedDate} · {b.rescheduleRequest.requestedSlot}</strong>
+            </div>
+            {b.rescheduleRequest.studentMessage && (
+              <div className="text-xs text-gray-400 mt-2 italic">"{b.rescheduleRequest.studentMessage}"</div>
+            )}
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => onRespondReschedule(b, "accept")}
+                className="bg-green-500/15 border border-green-500/30 text-green-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-green-500/25">
+                ✓ Accept
+              </button>
+              <button onClick={() => onRespondReschedule(b, "reject")}
+                className="bg-red-500/10 border border-red-500/20 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20">
+                ✕ Reject
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Action buttons */}
         <div className="flex gap-2 mt-4 flex-wrap">
           {b.status === "confirmed" && (
             <>
-              <button onClick={() => onStatusUpdate(b._id, "completed")}
+              <button onClick={() => onStatusUpdate(b._id, "completed", b.user?.name || b.studentInfo?.name)}
                 className="bg-green-500/15 border border-green-500/30 text-green-400
                   px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-green-500/25 transition-all">
                 ✓ Mark Completed
               </button>
-              <button onClick={() => onStatusUpdate(b._id, "cancelled")}
+              <button onClick={() => onStatusUpdate(b._id, "cancelled", b.user?.name || b.studentInfo?.name)}
                 className="bg-red-500/10 border border-red-500/20 text-red-400
                   px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
                 ✕ Cancel
+              </button>
+              <button onClick={() => onReschedule(b)}
+                className="bg-orange-500/10 border border-orange-500/20 text-orange-400
+                  px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-orange-500/20 transition-all">
+                🔄 Reschedule
               </button>
             </>
           )}
@@ -1242,11 +1452,19 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
             ✉️ Email
           </button>
           {b.meetLink && (
-            <a href={b.meetLink} target="_blank" rel="noreferrer"
-              className="bg-teal-500/10 border border-teal-500/20 text-teal-400
-                px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-500/20 transition-all">
-              📹 Meet
-            </a>
+            ["completed", "cancelled"].includes(b.status) ? (
+              <span className="bg-white/5 border border-white/10 text-gray-500
+                px-3 py-1.5 rounded-lg text-xs font-medium cursor-not-allowed"
+                title={`Session ${b.status}`}>
+                📹 Meet (ended)
+              </span>
+            ) : (
+              <a href={b.meetLink} target="_blank" rel="noreferrer"
+                className="bg-teal-500/10 border border-teal-500/20 text-teal-400
+                  px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-500/20 transition-all">
+                📹 Meet
+              </a>
+            )
           )}
         </div>
       </div>
@@ -1306,6 +1524,37 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
                 </div>
               </div>
             )}
+
+            {/* Shared resources (files/links to the student) */}
+            <div className="md:col-span-2">
+              <div className="text-xs text-teal-400 mb-2">📎 Shared Resources (student sees these)</div>
+              {b.resources?.length > 0 && (
+                <div className="space-y-1.5 mb-2">
+                  {b.resources.map((r) => (
+                    <div key={r._id} className="flex items-center justify-between bg-teal-500/5 border border-teal-500/15 rounded-lg px-3 py-2">
+                      <a href={r.url} target="_blank" rel="noreferrer" className="text-teal-300 text-xs truncate hover:underline">
+                        {r.type === "file" ? "📄" : "🔗"} {r.title || r.url}
+                      </a>
+                      <button onClick={() => onRemoveResource(b._id, r._id)}
+                        className="text-red-400 text-xs ml-2 flex-shrink-0 hover:text-red-300">remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2 flex-wrap">
+                <input value={resTitle} onChange={(e) => setResTitle(e.target.value)}
+                  placeholder="Title (e.g. Roadmap PDF)"
+                  className="flex-1 min-w-[120px] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs outline-none focus:border-teal-500/50" />
+                <input value={resUrl} onChange={(e) => setResUrl(e.target.value)}
+                  placeholder="Paste link (Drive/Dropbox)"
+                  className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs outline-none focus:border-teal-500/50" />
+                <button onClick={() => { if (resUrl.trim()) { onAddResource(b._id, resTitle, resUrl, "link"); setResTitle(""); setResUrl(""); } }}
+                  className="bg-teal-500/15 border border-teal-500/30 text-teal-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-500/25">
+                  + Add
+                </button>
+              </div>
+              <p className="text-gray-500 text-[11px] mt-1">Paste a Google Drive / Dropbox link. (Direct file upload activates once Cloudinary is set up.)</p>
+            </div>
             <div>
               <div className="text-xs text-gray-400 mb-1">Booking ID</div>
               <div className="font-mono text-xs text-gray-400">{b._id}</div>
@@ -1322,7 +1571,12 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
 }
 
 // ---- Testimonials Tab ----
-function TestimonialsTab({ showToast }) {
+// FIX: previously used relative fetch("/api/admin/testimonials") which
+// (a) hit a route that doesn't exist on the backend and (b) resolved to
+// the FRONTEND domain in production, returning HTML instead of JSON.
+// Now goes through testimonialAPI, which uses VITE_API_URL and the
+// real routes (/testimonials/admin/all etc).
+function TestimonialsTab({ showToast, askConfirm }) {
   const [testimonials, setTestimonials] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -1330,10 +1584,7 @@ function TestimonialsTab({ showToast }) {
 
   const fetchAll = async () => {
     try {
-      const response = await fetch("/api/admin/testimonials", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
-      });
-      const data = await response.json();
+      const data = await testimonialAPI.getAll();
       setTestimonials(data.testimonials || []);
     } catch (err) {
       showToast("Failed to load reviews", "error");
@@ -1344,25 +1595,26 @@ function TestimonialsTab({ showToast }) {
 
   const approve = async (id) => {
     try {
-      await fetch(`/api/admin/testimonials/${id}/approve`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
-      });
+      await testimonialAPI.approve(id);
       showToast("Review approved and published! ✅");
       fetchAll();
     } catch { showToast("Failed to approve", "error"); }
   };
 
-  const remove = async (id) => {
-    if (!confirm("Delete this review permanently?")) return;
-    try {
-      await fetch(`/api/admin/testimonials/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("mentorToken")}` },
-      });
-      showToast("Review deleted");
-      fetchAll();
-    } catch { showToast("Failed to delete", "error"); }
+  const remove = (id, name) => {
+    askConfirm({
+      title: "Delete this review?",
+      message: `${name ? `${name}'s review` : "This review"} will be removed permanently and unpublished from the site.`,
+      confirmLabel: "Delete review",
+      tone: "danger",
+      onConfirm: async () => {
+        try {
+          await testimonialAPI.delete(id);
+          showToast("Review deleted");
+          fetchAll();
+        } catch { showToast("Failed to delete", "error"); }
+      },
+    });
   };
 
   if (loading) return <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-3">⏳</div>Loading reviews...</div>;
@@ -1417,7 +1669,7 @@ function TestimonialsTab({ showToast }) {
                       px-5 py-2 rounded-xl text-xs font-display font-bold hover:bg-green-500/25 transition-all">
                     ✓ Approve & Publish
                   </button>
-                  <button onClick={() => remove(t._id)}
+                  <button onClick={() => remove(t._id, t.name)}
                     className="bg-red-500/8 border border-red-500/20 text-red-400
                       px-5 py-2 rounded-xl text-xs font-display font-bold hover:bg-red-500/15 transition-all">
                     ✕ Delete
@@ -1465,7 +1717,7 @@ function TestimonialsTab({ showToast }) {
                     "{t.text.slice(0, 120)}{t.text.length > 120 ? "..." : ""}"
                   </p>
                 </div>
-                <button onClick={() => remove(t._id)}
+                <button onClick={() => remove(t._id, t.name)}
                   className="text-red-400 text-xs hover:underline flex-shrink-0 opacity-60 hover:opacity-100 transition-all">
                   Delete
                 </button>

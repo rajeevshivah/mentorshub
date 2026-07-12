@@ -1,8 +1,9 @@
 // ============================================================
-// AuthContext — Global user authentication state
-// Wrap entire app so any component can access user info
+// AuthContext — global auth state
+// FIX: restores the session on page load by reading the stored
+// token and calling getMe(). Previously a refresh logged users out.
 // ============================================================
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import { authAPI } from "../utils/api";
 
 const AuthContext = createContext(null);
@@ -10,6 +11,17 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(true); // true until session check done
+
+  // ---- Restore session on first load ----
+  useEffect(() => {
+    const token = localStorage.getItem("mentorToken");
+    if (!token) { setBootstrapping(false); return; }
+    authAPI.getMe()
+      .then((data) => setUser(data.user))
+      .catch(() => localStorage.removeItem("mentorToken")) // bad/expired token
+      .finally(() => setBootstrapping(false));
+  }, []);
 
   const login = async (email, password) => {
     setAuthLoading(true);
@@ -39,17 +51,37 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // Used by reset-password to log straight in after a successful reset
+  const setSession = (token, userObj) => {
+    localStorage.setItem("mentorToken", token);
+    setUser(userObj);
+  };
+
+  const loginWithGoogle = async (credential) => {
+    setAuthLoading(true);
+    try {
+      const data = await authAPI.google(credential);
+      localStorage.setItem("mentorToken", data.token);
+      setUser(data.user);
+      return { success: true, user: data.user };
+    } catch (err) {
+      return { success: false, error: err.message };
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem("mentorToken");
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, authLoading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, authLoading, bootstrapping, login, register, loginWithGoogle, logout, setSession, setUser }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-// Custom hook — use this in any component
 export const useAuth = () => useContext(AuthContext);

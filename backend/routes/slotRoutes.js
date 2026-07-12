@@ -3,8 +3,9 @@ const router = express.Router();
 const Slot = require("../models/Slot");
 const Booking = require("../models/Booking");
 const BlockedDate = require("../models/BlockedDate");
+const { ACTIVE_BOOKING_STATUSES } = require("../utils/bookingConstants");
 
-// Get all active slots
+// All active slots
 router.get("/", async (req, res) => {
   try {
     const slots = await Slot.find({ isActive: true }).sort("time");
@@ -14,40 +15,32 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get available slots for a specific date
+// Available slots for a date
 router.get("/available", async (req, res) => {
   try {
     const { date } = req.query;
     if (!date) return res.status(400).json({ success: false, error: "Date required" });
 
-    // Check if entire date is blocked
     const blocked = await BlockedDate.findOne({ date, allDay: true });
     if (blocked) {
-      return res.json({
-        success: true,
-        slots: [],
-        message: `Not available on this date: ${blocked.reason}`
-      });
+      return res.json({ success: true, slots: [], message: `Not available: ${blocked.reason}` });
     }
 
-    // Get all active slots
     const allSlots = await Slot.find({ isActive: true }).sort("time");
 
-    // Get already booked slots for this date
+    // FIX: use the SAME status set as the conflict check, so a slot held by a
+    // pending_upi booking is correctly shown as unavailable.
     const bookedSlots = await Booking.find({
       date,
-      status: { $in: ["confirmed", "pending"] }
+      status: { $in: ACTIVE_BOOKING_STATUSES },
     }).select("timeSlot");
-    const bookedTimes = bookedSlots.map(b => b.timeSlot);
+    const bookedTimes = bookedSlots.map((b) => b.timeSlot);
 
-    // Get specifically blocked slots for this date
     const partialBlock = await BlockedDate.findOne({ date, allDay: false });
     const partialBlockedSlots = partialBlock?.blockedSlots || [];
 
-    // Filter out booked and blocked slots
-    const available = allSlots.filter(s =>
-      !bookedTimes.includes(s.time) &&
-      !partialBlockedSlots.includes(s.time)
+    const available = allSlots.filter(
+      (s) => !bookedTimes.includes(s.time) && !partialBlockedSlots.includes(s.time)
     );
 
     res.json({ success: true, slots: available });

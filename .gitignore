@@ -6,3 +6,13 @@ frontend/node_modules
 frontend/dist
 .DS_Store
 *.log
+
+# Documentation files (keep locally, don't push)
+CHANGELOG_THIS_UPDATE*
+GOOGLE_SIGNIN_SETUP*
+README_OVERHAUL*
+SETUP_GUIDE_overhaul*
+
+# Backup script and backup dumps (contain database password and real user data)
+backup-mentordb.ps1
+backups/

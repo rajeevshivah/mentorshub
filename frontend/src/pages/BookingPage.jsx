@@ -4,7 +4,8 @@
 // Slots fetched from database, calendar has month navigation
 // ============================================================
 import { useState, useEffect } from "react";
-import { PACKAGES, YEARS } from "../data/constants";
+import { YEARS } from "../data/constants";
+import { packageAPI } from "../utils/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { paymentAPI, bookingAPI, slotAPI } from "../utils/api";
@@ -17,6 +18,7 @@ export default function BookingPage({ selectedPkgId, setPage }) {
 
   // ---- Booking state ----
   const [step, setStep] = useState(1);
+  const [packages, setPackages] = useState([]);
   const [selectedPkg, setSelectedPkg] = useState(selectedPkgId || null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -45,6 +47,13 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
     goals: "",
     questions: "",
   });
+
+  // ---- Fetch packages from API (replaces hardcoded PACKAGES) ----
+  useEffect(() => {
+    packageAPI.getActive("tech")
+      .then((res) => setPackages(res.packages || []))
+      .catch(() => setPackages([]));
+  }, []);
 
   // ---- Fetch slots when date selected ----
   useEffect(() => {
@@ -122,7 +131,7 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
     }
     setPayLoading(true);
     try {
-      const order = await paymentAPI.createOrder(pkg.price, pkg.name);
+      const order = await paymentAPI.createOrder(pkg._id);
       const loaded = await loadRazorpay();
       if (!loaded) {
         showToast("Failed to load payment gateway", "error");
@@ -143,15 +152,11 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
               paymentDbId: order.paymentId,
             });
             await bookingAPI.create({
-              packageId: String(pkg.id),
-              packageName: pkg.name,
-              packagePrice: pkg.price,
-              packageDuration: pkg.duration,
+              packageId: String(pkg._id),
               date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
               timeSlot: selectedSlot,
               studentInfo: form,
               paymentId: order.paymentId,
-              meetLink: "https://meet.google.com/mentorshub-session",
             });
             showToast("Payment successful! Check your email for Meet link 🎉");
             setPage("dashboard");
@@ -172,7 +177,7 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
     }
   };
 
-  const pkg = PACKAGES.find((p) => p.id === selectedPkg) || PACKAGES[1];
+  const pkg = packages.find((p) => p._id === selectedPkg) || packages[0] || {};
   const inputClass = "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-yellow-500/50 outline-none text-sm transition-colors";
 // ---- UPI booking handler ----
 // const handleUpiBooking = async () => {
@@ -218,16 +223,12 @@ const handleUpiBooking = async () => {
   setPayLoading(true);
   try {
     await bookingAPI.create({
-      packageId: String(pkg.id),
-      packageName: pkg.name,
-      packagePrice: pkg.price,
-      packageDuration: pkg.duration,
+      packageId: String(pkg._id),
       date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
       timeSlot: selectedSlot,
       studentInfo: form,
       paymentMethod: "upi",
       upiTransactionId: upiTransactionId.trim(),
-      meetLink: null,
     });
     showToast("Booking submitted! You'll get a confirmation email within 2 hours 🎉");
     // Small delay before navigation
@@ -285,12 +286,12 @@ const handleUpiBooking = async () => {
         <div>
           <h3 className="font-display font-bold text-lg mb-5">Choose Your Package</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {PACKAGES.map((p) => (
+            {packages.map((p) => (
               <PackageCard
-                key={p.id}
+                key={p._id}
                 pkg={p}
                 selectable={true}
-                selected={selectedPkg === p.id}
+                selected={selectedPkg === p._id}
                 onBook={(id) => setSelectedPkg(id)}
               />
             ))}

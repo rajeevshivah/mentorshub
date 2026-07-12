@@ -5,7 +5,7 @@
 export default function PackageCard({ pkg, onBook, selected, selectable }) {
   return (
     <div
-      onClick={() => selectable && onBook(pkg.id)}
+      onClick={() => selectable && onBook(pkg._id)}
       className={`relative bg-white/4 border rounded-2xl p-7 transition-all
         ${selectable ? "cursor-pointer hover:-translate-y-0.5" : "hover:-translate-y-1"}
         ${pkg.popular ? "border-yellow-500/40 bg-yellow-500/4" : "border-white/7 hover:border-white/15"}
@@ -50,7 +50,7 @@ export default function PackageCard({ pkg, onBook, selected, selectable }) {
       {/* Book button — only shown when not in selectable mode */}
       {!selectable && (
         <button
-          onClick={() => onBook(pkg.id)}
+          onClick={() => onBook(pkg._id)}
           className="w-full bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
             font-display font-bold py-2.5 rounded-xl hover:opacity-90 transition-all"
         >

@@ -4,6 +4,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Tell the browser this is a dark app so native UI (select popups,
+   date pickers, scrollbars) renders with dark styling instead of
+   white-on-white. This fixes invisible dropdown option text. */
+:root {
+  color-scheme: dark;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -18,4 +25,11 @@ body {
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Native <option> elements ignore Tailwind classes on the <select>.
+   Style them explicitly so every dropdown in the app is readable. */
+select option {
+  background-color: #131929;
+  color: #e8eaf0;
 }
