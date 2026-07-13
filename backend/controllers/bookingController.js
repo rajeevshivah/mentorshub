@@ -10,6 +10,8 @@ const {
 const { sendRescheduleEmail, sendRescheduleRequestEmail, sendRescheduleDecisionEmail } = require("../utils/sendEmailExtra");
 
 // Helper: is this slot already taken on this date?
+const { slotUnavailableReason } = require("../utils/slotRules");
+
 async function slotTaken(date, timeSlot, excludeId = null) {
   const query = {
     date,
@@ -50,6 +52,13 @@ exports.createBooking = async (req, res) => {
         success: false,
         error: "This slot is already booked. Please choose another time.",
       });
+    }
+
+    // Blocked dates/slots + 2-hour same-day notice, enforced server-side
+    // so a stale browser tab can't book around the rules.
+    const unavailable = await slotUnavailableReason(date, timeSlot);
+    if (unavailable) {
+      return res.status(409).json({ success: false, error: unavailable });
     }
 
     const method = paymentMethod === "upi" ? "upi" : "razorpay";
@@ -163,7 +172,7 @@ exports.cancelBooking = async (req, res) => {
 // ============================================================
 exports.rescheduleBooking = async (req, res) => {
   try {
-    const { date, timeSlot, message } = req.body;
+    const { date, timeSlot, message, meetLink } = req.body;
     if (!date || !timeSlot) {
       return res.status(400).json({ success: false, error: "New date and time required" });
     }
@@ -191,6 +200,15 @@ exports.rescheduleBooking = async (req, res) => {
       return res.status(409).json({ success: false, error: "That slot is already booked" });
     }
 
+    // Students must respect blocks and the 2-hour notice window.
+    // Admin reschedules skip this — you coordinate directly with the student.
+    if (!isAdmin) {
+      const unavailable = await slotUnavailableReason(date, timeSlot);
+      if (unavailable) {
+        return res.status(409).json({ success: false, error: unavailable });
+      }
+    }
+
     // ---- ADMIN: reschedule takes effect immediately ----
     if (isAdmin) {
       const from = { date: booking.date, slot: booking.timeSlot };
@@ -202,6 +220,8 @@ exports.rescheduleBooking = async (req, res) => {
       booking.date = date;
       booking.timeSlot = timeSlot;
       booking.reminderSent = false;
+      // Optional new meeting link; empty = keep the existing one
+      if (meetLink && meetLink.trim()) booking.meetLink = meetLink.trim();
       // clear any pending student request since admin acted directly
       if (booking.rescheduleRequest?.status === "pending") {
         booking.rescheduleRequest.status = "accepted";
@@ -248,7 +268,7 @@ exports.rescheduleBooking = async (req, res) => {
 // ============================================================
 exports.respondToReschedule = async (req, res) => {
   try {
-    const { decision, response } = req.body;
+    const { decision, response, meetLink } = req.body;
     if (!["accept", "reject"].includes(decision)) {
       return res.status(400).json({ success: false, error: "decision must be accept or reject" });
     }
@@ -276,6 +296,8 @@ exports.respondToReschedule = async (req, res) => {
       booking.date = req_.requestedDate;
       booking.timeSlot = req_.requestedSlot;
       booking.reminderSent = false;
+      // Optional new meeting link on acceptance; empty = keep existing
+      if (meetLink && meetLink.trim()) booking.meetLink = meetLink.trim();
       req_.status = "accepted";
     } else {
       req_.status = "rejected";

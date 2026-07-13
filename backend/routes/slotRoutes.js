@@ -3,6 +3,7 @@ const router = express.Router();
 const Slot = require("../models/Slot");
 const Booking = require("../models/Booking");
 const BlockedDate = require("../models/BlockedDate");
+const { tooSoon } = require("../utils/slotRules");
 const { ACTIVE_BOOKING_STATUSES } = require("../utils/bookingConstants");
 
 // All active slots
@@ -40,7 +41,11 @@ router.get("/available", async (req, res) => {
     const partialBlockedSlots = partialBlock?.blockedSlots || [];
 
     const available = allSlots.filter(
-      (s) => !bookedTimes.includes(s.time) && !partialBlockedSlots.includes(s.time)
+      (s) =>
+        !bookedTimes.includes(s.time) &&
+        !partialBlockedSlots.includes(s.time) &&
+        // same-day: hide slots that already passed or start within 2 hours (IST)
+        !tooSoon(date, s.time)
     );
 
     res.json({ success: true, slots: available });

@@ -126,7 +126,7 @@ router.post("/bookings/:id/note", async (req, res) => {
 router.post("/bookings/:id/email", async (req, res) => {
   try {
     const { sendStudentMessage } = require("../utils/sendEmailExtra");
-    const { subject, message } = req.body;
+    const { subject, message, saveAsNote } = req.body;
     if (!message?.trim()) {
       return res.status(400).json({ success: false, error: "Message is required" });
     }
@@ -138,11 +138,15 @@ router.post("/bookings/:id/email", async (req, res) => {
 
     await sendStudentMessage(to, booking.studentInfo?.name, subject, message, booking.resources || []);
 
-    // also surface it in their dashboard by appending to sessionNotes
-    const stamp = new Date().toLocaleDateString("en-IN");
-    booking.sessionNotes = (booking.sessionNotes ? booking.sessionNotes + "\n\n" : "")
-      + `[${stamp}] ${subject ? subject + ": " : ""}${message}`;
-    await booking.save();
+    // Optionally surface it in the student's dashboard as a session note.
+    // Off by default: emails are often logistics (links, payment, timing)
+    // that don't belong in session notes.
+    if (saveAsNote) {
+      const stamp = new Date().toLocaleDateString("en-IN");
+      booking.sessionNotes = (booking.sessionNotes ? booking.sessionNotes + "\n\n" : "")
+        + `[${stamp}] ${subject ? subject + ": " : ""}${message}`;
+      await booking.save();
+    }
 
     res.json({ success: true, booking });
   } catch (err) {
@@ -315,9 +319,35 @@ router.get("/blocked-dates", async (req, res) => {
 });
 router.post("/blocked-dates", async (req, res) => {
   try {
-    const { date, reason } = req.body;
-    const existing = await BlockedDate.findOne({ date });
+    const { date, reason, timeSlot } = req.body;
+
+    // ---- Single-slot block ("8:00 PM on 14 July only") ----
+    if (timeSlot) {
+      const dayBlock = await BlockedDate.findOne({ date, allDay: true });
+      if (dayBlock) {
+        return res.status(400).json({ success: false, error: "That whole day is already blocked" });
+      }
+      let partial = await BlockedDate.findOne({ date, allDay: false });
+      if (partial) {
+        if ((partial.blockedSlots || []).includes(timeSlot)) {
+          return res.status(400).json({ success: false, error: "That slot is already blocked for this date" });
+        }
+        partial.blockedSlots.push(timeSlot);
+        if (reason) partial.reason = reason;
+        await partial.save();
+        return res.status(201).json({ success: true, blocked: partial });
+      }
+      const blocked = await BlockedDate.create({
+        date, reason: reason || "Unavailable", allDay: false, blockedSlots: [timeSlot],
+      });
+      return res.status(201).json({ success: true, blocked });
+    }
+
+    // ---- Whole-day block (existing behavior) ----
+    const existing = await BlockedDate.findOne({ date, allDay: true });
     if (existing) return res.status(400).json({ success: false, error: "Date already blocked" });
+    // A full-day block supersedes any single-slot blocks on the same date
+    await BlockedDate.deleteMany({ date, allDay: false });
     const blocked = await BlockedDate.create({ date, reason: reason || "Unavailable", allDay: true });
     res.status(201).json({ success: true, blocked });
   } catch (err) {
@@ -341,8 +371,21 @@ router.post("/blocked-dates/range", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+// Optional ?slot=8:00 PM removes just that slot from a partial block
+// (deleting the whole record when it was the last one). Without ?slot,
+// the entire block is removed — same as before.
 router.delete("/blocked-dates/:id", async (req, res) => {
   try {
+    const { slot } = req.query;
+    if (slot) {
+      const doc = await BlockedDate.findById(req.params.id);
+      if (doc && !doc.allDay) {
+        doc.blockedSlots = (doc.blockedSlots || []).filter((t) => t !== slot);
+        if (doc.blockedSlots.length === 0) await doc.deleteOne();
+        else await doc.save();
+        return res.json({ success: true });
+      }
+    }
     await BlockedDate.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: "Date unblocked" });
   } catch (err) {

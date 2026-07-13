@@ -83,10 +83,10 @@ export const adminAPI = {
   deleteSlot: (id) => request("DELETE", `/admin/slots/${id}`),
   getStudents: () => request("GET", "/admin/students"),
   getBlockedDates: () => request("GET", "/admin/blocked-dates"),
-  blockDate: (date, reason) => request("POST", "/admin/blocked-dates", { date, reason }),
+  blockDate: (date, reason, timeSlot = "") => request("POST", "/admin/blocked-dates", { date, reason, timeSlot }),
   blockDateRange: (startDate, endDate, reason) =>
     request("POST", "/admin/blocked-dates/range", { startDate, endDate, reason }),
-  unblockDate: (id) => request("DELETE", `/admin/blocked-dates/${id}`),
+  unblockDate: (id, slot = "") => request("DELETE", `/admin/blocked-dates/${id}${slot ? `?slot=${encodeURIComponent(slot)}` : ""}`),
   cleanDatabase: (options) => request("DELETE", "/admin/clean-database", options),
   // Booking lifecycle
   confirmUpiPayment: (id, meetLink) => request("PUT", `/bookings/${id}/confirm-upi`, { meetLink }),

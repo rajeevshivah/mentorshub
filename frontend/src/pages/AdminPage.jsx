@@ -59,6 +59,7 @@ export default function AdminPage({ setPage }) {
   const [blockedDates, setBlockedDates] = useState([]);
 
   // ---- Filters ----
+  const [filterBrand, setFilterBrand] = useState("all");   // all | tech | meditation
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
@@ -70,6 +71,7 @@ export default function AdminPage({ setPage }) {
   const [newSlotDays, setNewSlotDays] = useState([...DAYS].filter(d => d !== "Sunday"));
   const [blockedDate, setBlockedDate] = useState("");
   const [blockReason, setBlockReason] = useState("");
+  const [blockSlot, setBlockSlot] = useState("");   // "" = whole day
   const [vacationStart, setVacationStart] = useState("");
   const [vacationEnd, setVacationEnd] = useState("");
   const [vacationReason, setVacationReason] = useState("");
@@ -86,6 +88,8 @@ export default function AdminPage({ setPage }) {
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [respondTarget, setRespondTarget] = useState(null);  // { booking, decision }
   const [respondText, setRespondText] = useState("");
+  const [respondMeetLink, setRespondMeetLink] = useState("");   // optional new link on accept
+  const [saveEmailAsNote, setSaveEmailAsNote] = useState(false); // email → session notes toggle
   const [meetLinkInput, setMeetLinkInput] = useState("");
 
   // ---- Data loading ----
@@ -112,7 +116,7 @@ export default function AdminPage({ setPage }) {
   }, [bootstrapping, user?.id]);
 
   // Jump back to page 1 whenever a booking filter changes.
-  useEffect(() => { setBookingsPage(1); }, [filterStatus, filterDate, filterSearch]);
+  useEffect(() => { setBookingsPage(1); }, [filterStatus, filterDate, filterSearch, filterBrand]);
 
   // silent=true skips the full-page loader (used by background refresh)
   const fetchAll = async (silent = false) => {
@@ -187,19 +191,23 @@ export default function AdminPage({ setPage }) {
     });
   };
 
-  const handleAdminReschedule = async (date, timeSlot) => {
-    await adminAPI.rescheduleBooking(rescheduleTarget._id, date, timeSlot);
-    showToast("Booking rescheduled — student notified");
+  const handleAdminReschedule = async (date, timeSlot, _message, meetLink) => {
+    await adminAPI.rescheduleBooking(rescheduleTarget._id, date, timeSlot, meetLink);
+    showToast("Booking rescheduled, student notified");
     setRescheduleTarget(null);
     fetchAll();
   };
 
   const submitRescheduleResponse = async () => {
     try {
-      await adminAPI.respondReschedule(respondTarget.booking._id, respondTarget.decision, respondText);
+      await adminAPI.respondReschedule(
+        respondTarget.booking._id, respondTarget.decision, respondText,
+        respondTarget.decision === "accept" ? respondMeetLink : ""
+      );
       showToast(respondTarget.decision === "accept" ? "Reschedule accepted" : "Reschedule rejected");
       setRespondTarget(null);
       setRespondText("");
+      setRespondMeetLink("");
       fetchAll();
     } catch (err) {
       showToast(err.message, "error");
@@ -246,11 +254,12 @@ export default function AdminPage({ setPage }) {
     }
     setSendingEmail(true);
     try {
-      await adminAPI.sendEmailToStudent(emailModal.bookingId, emailSubject, emailBody);
+      await adminAPI.sendEmailToStudent(emailModal.bookingId, emailSubject, emailBody, saveEmailAsNote);
       showToast(`Email sent to ${emailModal.email}!`);
       setEmailModal(null);
       setEmailSubject("");
       setEmailBody("");
+      setSaveEmailAsNote(false);
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -386,7 +395,12 @@ const confirmUpiPayment = async () => {
       name.toLowerCase().includes(filterSearch.toLowerCase()) ||
       email.toLowerCase().includes(filterSearch.toLowerCase()) ||
       b.packageName.toLowerCase().includes(filterSearch.toLowerCase());
-    return matchStatus && matchDate && matchSearch;
+    // Old bookings have no brand field — they count as tech.
+    const matchBrand =
+      filterBrand === "all" ? true :
+      filterBrand === "meditation" ? b.brand === "meditation" :
+      b.brand !== "meditation";
+    return matchStatus && matchDate && matchSearch && matchBrand;
   });
 
   // ---- Pagination (bookings tab) ----
@@ -592,7 +606,21 @@ const confirmUpiPayment = async () => {
               {tab === "bookings" && (
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-                    <h2 className="font-display text-2xl font-black">All Bookings</h2>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <h2 className="font-display text-2xl font-black">All Bookings</h2>
+                      {/* Brand toggle: which platform's bookings to show */}
+                      <div className="flex bg-white/5 border border-white/10 rounded-xl p-1">
+                        {[["all", "All"], ["tech", "💻 MentorHub"], ["meditation", "🧘 talkWithShivah"]].map(([val, label]) => (
+                          <button key={val} onClick={() => setFilterBrand(val)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-display font-semibold transition-all
+                              ${filterBrand === val
+                                ? "bg-gradient-to-r from-yellow-500 to-yellow-300 text-black"
+                                : "text-gray-400 hover:text-white"}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button onClick={exportCSV}
                       className="bg-white/5 border border-white/10 text-white px-4 py-2 rounded-xl
                         text-sm font-display font-semibold hover:bg-white/8 transition-all">
@@ -740,6 +768,16 @@ const confirmUpiPayment = async () => {
                             className={`${inputClass} w-full`} />
                         </div>
                         <div>
+                          <label className="block text-xs text-gray-400 mb-1.5">What to block</label>
+                          <select value={blockSlot} onChange={(e) => setBlockSlot(e.target.value)}
+                            className={`${inputClass} w-full`}>
+                            <option value="">Whole day</option>
+                            {slots.map((s) => (
+                              <option key={s._id} value={s.time}>Only {s.time}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
                           <label className="block text-xs text-gray-400 mb-1.5">Reason (optional)</label>
                           <input placeholder="Holiday, Personal, etc."
                             value={blockReason} onChange={(e) => setBlockReason(e.target.value)}
@@ -749,15 +787,17 @@ const confirmUpiPayment = async () => {
                           onClick={async () => {
                             if (!blockedDate) { showToast("Please select a date", "error"); return; }
                             try {
-                              await adminAPI.blockDate(blockedDate, blockReason);
-                              showToast(`${blockedDate} blocked!`);
-                              setBlockedDate(""); setBlockReason("");
+                              await adminAPI.blockDate(blockedDate, blockReason, blockSlot);
+                              showToast(blockSlot
+                                ? `${blockSlot} blocked on ${blockedDate}`
+                                : `${blockedDate} blocked (whole day)`);
+                              setBlockedDate(""); setBlockReason(""); setBlockSlot("");
                               fetchAll();
                             } catch (err) { showToast(err.message, "error"); }
                           }}
                           className="w-full border border-red-500/30 text-red-400 font-display font-bold
                             py-2.5 rounded-xl text-sm hover:bg-red-500/10 transition-all">
-                          🚫 Block This Date
+                          🚫 {blockSlot ? "Block This Slot" : "Block This Date"}
                         </button>
                       </div>
                     </div>
@@ -904,17 +944,37 @@ const confirmUpiPayment = async () => {
                           <div className="font-display font-bold text-sm">
                             {new Date(b.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                           </div>
-                          <div className="text-xs text-red-400 mt-1">{b.reason}</div>
+                          <div className="text-xs text-red-400 mt-1">
+                            {b.allDay !== false ? "Full day" : "Specific slots"} · {b.reason}
+                          </div>
+                          {b.allDay === false && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {(b.blockedSlots || []).map((t) => (
+                                <button key={t} title="Unblock this slot"
+                                  onClick={async () => {
+                                    try {
+                                      await adminAPI.unblockDate(b._id, t);
+                                      showToast(`${t} unblocked`);
+                                      fetchAll();
+                                    } catch (err) { showToast(err.message, "error"); }
+                                  }}
+                                  className="text-[11px] bg-white/5 border border-white/10 rounded-full
+                                    px-2 py-0.5 text-gray-300 hover:border-red-400/50 hover:text-red-300 transition-all">
+                                  {t} ✕
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           <button onClick={async () => {
                             try {
                               await adminAPI.unblockDate(b._id);
-                              showToast("Date unblocked!");
+                              showToast(b.allDay === false ? "All slots unblocked for this date" : "Date unblocked!");
                               fetchAll();
                             } catch (err) { showToast(err.message, "error"); }
                           }}
                             className="mt-2 w-full text-xs border border-white/10 text-gray-400
                               rounded-lg py-1 hover:border-white/25 hover:text-white transition-all">
-                            Unblock
+                            {b.allDay === false ? "Unblock all" : "Unblock"}
                           </button>
                         </div>
                       ))}
@@ -1139,6 +1199,17 @@ const confirmUpiPayment = async () => {
               {respondTarget.booking.rescheduleRequest?.requestedDate} · {respondTarget.booking.rescheduleRequest?.requestedSlot}
               {respondTarget.decision === "accept" ? " — the booking will move to this slot." : " — the booking stays as-is."}
             </p>
+            {respondTarget.decision === "accept" && (
+              <div className="mb-4">
+                <label className="text-xs text-gray-400 mb-1 block">New meeting link (optional)</label>
+                <input type="url" value={respondMeetLink} onChange={(e) => setRespondMeetLink(e.target.value)}
+                  placeholder="Leave empty to keep the current link"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-yellow-500/50" />
+                {respondTarget.booking.meetLink && (
+                  <p className="text-[11px] text-gray-500 mt-1 break-all">Current: {respondTarget.booking.meetLink}</p>
+                )}
+              </div>
+            )}
             <label className="text-xs text-gray-400 mb-1 block">Response to student (optional)</label>
             <textarea rows={3} value={respondText} onChange={(e) => setRespondText(e.target.value)}
               placeholder={respondTarget.decision === "accept" ? "e.g. Sure, see you then!" : "e.g. That slot won't work, can you try Friday?"}
@@ -1161,6 +1232,7 @@ const confirmUpiPayment = async () => {
           booking={rescheduleTarget}
           onConfirm={handleAdminReschedule}
           onClose={() => setRescheduleTarget(null)}
+          showMeetLink={true}
         />
       )}
 
@@ -1212,6 +1284,15 @@ const confirmUpiPayment = async () => {
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
                     text-white text-sm outline-none focus:border-yellow-500/50 transition-colors resize-none" />
               </div>
+              <label className="flex items-start gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={saveEmailAsNote}
+                  onChange={(e) => setSaveEmailAsNote(e.target.checked)}
+                  className="rounded mt-0.5" />
+                <span className="text-xs text-gray-400 leading-snug">
+                  Also show this message in the student's dashboard as a session note.
+                  Leave unchecked for logistics emails (links, payment, timing).
+                </span>
+              </label>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setEmailModal(null)}
@@ -1312,7 +1393,9 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi 
                   <div className="font-medium whitespace-nowrap">{b.user?.name || b.studentInfo?.name}</div>
                   <div className="text-xs text-gray-400">{b.user?.email || b.studentInfo?.email}</div>
                 </td>
-                <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{b.packageName}</td>
+                <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">
+                  {b.brand === "meditation" ? "🧘 " : ""}{b.packageName}
+                </td>
                 <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{b.date}</td>
                 <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{b.timeSlot}</td>
                 <td className="px-4 py-3 text-yellow-400 font-bold whitespace-nowrap">₹{b.packagePrice}</td>
@@ -1381,6 +1464,9 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
           <div className="flex flex-col items-end gap-2">
             <span className={`px-3 py-1 rounded-full text-xs font-medium border ${STATUS_COLORS[b.status] || ""}`}>
               {b.status}
+            </span>
+            <span className="text-[11px] text-gray-500">
+              {b.brand === "meditation" ? "🧘 talkWithShivah" : "💻 MentorHub"}
             </span>
             <button onClick={() => setExpanded(!expanded)}
               className="text-xs text-gray-400 hover:text-white transition-colors">
@@ -1578,6 +1664,7 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
 // real routes (/testimonials/admin/all etc).
 function TestimonialsTab({ showToast, askConfirm }) {
   const [testimonials, setTestimonials] = useState([]);
+  const [brandTab, setBrandTab] = useState("all");   // all | tech | meditation
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { fetchAll(); }, []);
@@ -1619,8 +1706,14 @@ function TestimonialsTab({ showToast, askConfirm }) {
 
   if (loading) return <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-3">⏳</div>Loading reviews...</div>;
 
-  const pending = testimonials.filter((t) => !t.approved);
-  const approved = testimonials.filter((t) => t.approved);
+  // Old reviews have no brand field — they count as tech.
+  const byBrand = testimonials.filter((t) =>
+    brandTab === "all" ? true :
+    brandTab === "meditation" ? t.brand === "meditation" :
+    t.brand !== "meditation"
+  );
+  const pending = byBrand.filter((t) => !t.approved);
+  const approved = byBrand.filter((t) => t.approved);
 
   return (
     <div>
@@ -1636,6 +1729,19 @@ function TestimonialsTab({ showToast, askConfirm }) {
         </div>
       </div>
 
+      {/* Brand toggle: which platform's reviews to show */}
+      <div className="flex bg-white/5 border border-white/10 rounded-xl p-1 w-fit mb-6">
+        {[["all", "All"], ["tech", "💻 MentorHub"], ["meditation", "🧘 talkWithShivah"]].map(([val, label]) => (
+          <button key={val} onClick={() => setBrandTab(val)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-display font-semibold transition-all
+              ${brandTab === val
+                ? "bg-gradient-to-r from-yellow-500 to-yellow-300 text-black"
+                : "text-gray-400 hover:text-white"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {pending.length > 0 && (
         <div className="mb-8">
           <h3 className="font-display font-bold text-base mb-4 flex items-center gap-2">
@@ -1647,7 +1753,12 @@ function TestimonialsTab({ showToast, askConfirm }) {
               <div key={t._id} className="bg-yellow-500/4 border border-yellow-500/15 rounded-2xl p-5">
                 <div className="flex justify-between items-start gap-4 mb-3 flex-wrap">
                   <div>
-                    <div className="font-display font-bold">{t.name}</div>
+                    <div className="font-display font-bold">
+                      {t.name}
+                      <span className="ml-2 text-[11px] text-gray-500 font-sans font-normal">
+                        {t.brand === "meditation" ? "🧘 talkWithShivah" : "💻 MentorHub"}
+                      </span>
+                    </div>
                     <div className="text-xs text-gray-400 mt-0.5">
                       {t.email}{t.college && ` · ${t.college}`}{t.year && ` · ${t.year}`}
                     </div>
@@ -1711,6 +1822,9 @@ function TestimonialsTab({ showToast, askConfirm }) {
                     <span className="font-semibold text-sm">{t.name}</span>
                     <span className="text-yellow-400 text-xs">{"★".repeat(t.rating)}</span>
                     <span className="bg-white/6 text-gray-400 text-xs px-2 py-0.5 rounded-md">{t.domain}</span>
+                    <span className="text-[11px] text-gray-500">
+                      {t.brand === "meditation" ? "🧘 talkWithShivah" : "💻 MentorHub"}
+                    </span>
                   </div>
                   {t.college && <div className="text-xs text-gray-500 mb-1 ml-10">{t.college}</div>}
                   <p className="text-gray-400 text-xs italic ml-10 truncate">
