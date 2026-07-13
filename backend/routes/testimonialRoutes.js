@@ -6,12 +6,13 @@ const { protect, adminOnly } = require("../middleware/authMiddleware");
 // ---- Public: Submit a testimonial ----
 router.post("/", async (req, res) => {
   try {
-    const { name, email, college, year, rating, text, domain } = req.body;
+    const { name, email, college, year, rating, text, domain, brand } = req.body;
     if (!name || !email || !rating || !text) {
       return res.status(400).json({ success: false, error: "Please fill all required fields" });
     }
     const testimonial = await Testimonial.create({
       name, email, college, year, rating, text, domain,
+      brand: ["tech", "meditation"].includes(brand) ? brand : "tech",
       approved: false, // needs admin approval
     });
     res.status(201).json({
@@ -26,7 +27,12 @@ router.post("/", async (req, res) => {
 // ---- Public: Get approved testimonials ----
 router.get("/", async (req, res) => {
   try {
-    const testimonials = await Testimonial.find({ approved: true })
+    // ?brand=meditation → only meditation reviews.
+    // ?brand=tech (or none) → tech reviews INCLUDING old ones without the field.
+    const filter = { approved: true };
+    if (req.query.brand === "meditation") filter.brand = "meditation";
+    else if (req.query.brand === "tech") filter.brand = { $ne: "meditation" };
+    const testimonials = await Testimonial.find(filter)
       .sort({ createdAt: -1 })
       .select("-email");
     res.json({ success: true, testimonials });

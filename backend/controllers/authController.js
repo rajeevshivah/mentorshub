@@ -158,7 +158,19 @@ exports.forgotPassword = async (req, res) => {
     const rawToken = user.createPasswordResetToken();
     await user.save({ validateBeforeSave: false });
 
-    const base = process.env.FRONTEND_URL || "https://mentorshub.rajeevshivah.me";
+    // Send the reset link back to the SITE the request came from
+    // (MentorHub or talkWithShivah), as long as it's a trusted origin.
+    const trusted = [
+      "https://mentorshub.rajeevshivah.me",
+      "https://talkwithshivah.rajeevshivah.me",
+      "http://localhost:5173",
+      "http://localhost:3000",
+      process.env.FRONTEND_URL,
+    ].filter(Boolean);
+    const origin = req.headers.origin;
+    const base = trusted.includes(origin)
+      ? origin
+      : (process.env.FRONTEND_URL || "https://mentorshub.rajeevshivah.me");
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
     try {

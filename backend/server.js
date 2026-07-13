@@ -30,6 +30,7 @@ const allowedOrigins = [
   "https://rajeevshivah.me",
   "https://www.rajeevshivah.me",
   "https://mentorshub.rajeevshivah.me",
+  "https://talkwithshivah.rajeevshivah.me",
   "https://www.minicimextech.com",
   process.env.FRONTEND_URL,
 ].filter(Boolean);

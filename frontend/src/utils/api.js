@@ -71,7 +71,7 @@ export const adminAPI = {
     request("GET", `/admin/bookings?q=${encodeURIComponent(q)}&status=${status}`),
   updateBooking: (id, data) => request("PUT", `/admin/bookings/${id}`, data),
   sendNote: (id, note) => request("POST", `/admin/bookings/${id}/note`, { note }),
-  sendEmailToStudent: (id, subject, message) => request("POST", `/admin/bookings/${id}/email`, { subject, message }),
+  sendEmailToStudent: (id, subject, message, saveAsNote = false) => request("POST", `/admin/bookings/${id}/email`, { subject, message, saveAsNote }),
   addResource: (id, title, url, type) => request("POST", `/admin/bookings/${id}/resource`, { title, url, type }),
   removeResource: (id, resourceId) => request("DELETE", `/admin/bookings/${id}/resource/${resourceId}`),
   createManualBooking: (data) => request("POST", "/admin/bookings/manual", data),
@@ -91,13 +91,13 @@ export const adminAPI = {
   // Booking lifecycle
   confirmUpiPayment: (id, meetLink) => request("PUT", `/bookings/${id}/confirm-upi`, { meetLink }),
   completeBooking: (id, sessionNotes) => request("PUT", `/bookings/${id}/complete`, { sessionNotes }),
-  rescheduleBooking: (id, date, timeSlot) => request("PUT", `/bookings/${id}/reschedule`, { date, timeSlot }),
-  respondReschedule: (id, decision, response) => request("PUT", `/bookings/${id}/reschedule-respond`, { decision, response }),
+  rescheduleBooking: (id, date, timeSlot, meetLink = "") => request("PUT", `/bookings/${id}/reschedule`, { date, timeSlot, meetLink }),
+  respondReschedule: (id, decision, response, meetLink = "") => request("PUT", `/bookings/${id}/reschedule-respond`, { decision, response, meetLink }),
 };
 
 export const testimonialAPI = {
   submit: (data) => request("POST", "/testimonials", data),
-  getApproved: () => request("GET", "/testimonials"),
+  getApproved: (brand = "tech") => request("GET", `/testimonials?brand=${brand}`),
   getAll: () => request("GET", "/testimonials/admin/all"),
   approve: (id) => request("PUT", `/testimonials/${id}/approve`),
   delete: (id) => request("DELETE", `/testimonials/${id}`),

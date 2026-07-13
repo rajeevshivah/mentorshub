@@ -43,7 +43,7 @@
 //             <p style="color:#f0a500;margin:0;font-size:14px">💡 Please be ready 5 minutes before your session. Keep your questions ready!</p>
 //           </div>
 //           <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-//           <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me · Empowering Indian Tech Professionals</p>
+//           <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url} · Empowering Indian Tech Professionals</p>
 //         </div>
 //       `,
 //     });
@@ -78,7 +78,7 @@
 //             <p style="color:#f0a500;margin:0;font-size:14px">⏱ Verification usually takes 1-2 hours. If not confirmed within 4 hours, email us at <a href="mailto:rajeev@rajeevshivah.me" style="color:#f0a500">rajeev@rajeevshivah.me</a></p>
 //           </div>
 //           <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-//           <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+//           <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
 //         </div>
 //       `,
 //     });
@@ -116,7 +116,7 @@
 //             <p style="color:#f0a500;margin:0;font-size:14px">💡 Please be ready 5 minutes before your session!</p>
 //           </div>
 //           <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-//           <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+//           <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
 //         </div>
 //       `,
 //     });
@@ -156,7 +156,9 @@
 
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-const sendEmail = async (to, subject, htmlContent) => {
+const brandMeta = require("./brandMeta");
+
+const sendEmail = async (to, subject, htmlContent, senderName) => {
   const response = await fetch(BREVO_API_URL, {
     method: "POST",
     headers: {
@@ -165,7 +167,7 @@ const sendEmail = async (to, subject, htmlContent) => {
       "api-key": process.env.BREVO_API_KEY,
     },
     body: JSON.stringify({
-      sender: { name: "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" },
+      sender: { name: senderName || "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" },
       to: [{ email: to }],
       subject,
       htmlContent,
@@ -184,6 +186,7 @@ const baseStyle = `font-family:Arial,sans-serif;max-width:600px;margin:auto;back
 const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:24px;margin-bottom:24px`;
 
 const sendBookingConfirmation = async (email, booking) => {
+  const bm = brandMeta(booking.brand);
   try {
     await sendEmail(email, `✅ Booking Confirmed — ${booking.packageName}`, `
       <div style="${baseStyle}">
@@ -204,15 +207,16 @@ const sendBookingConfirmation = async (email, booking) => {
           </a>
         </div>` : ""}
         <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-        <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+        <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
       </div>
-    `);
+    `, bm.sender);
   } catch (err) {
     console.error("❌ Email error:", err.message);
   }
 };
 
 const sendUpiPendingEmail = async (email, booking) => {
+  const bm = brandMeta(booking.brand);
   try {
     await sendEmail(email, `⏳ Booking Received — Payment Verification Pending`, `
       <div style="${baseStyle}">
@@ -229,15 +233,16 @@ const sendUpiPendingEmail = async (email, booking) => {
           <p style="color:#f0a500;margin:0;font-size:14px">⏱ Verification usually takes 1-2 hours. If not confirmed within 4 hours, email us at <a href="mailto:rajeev@rajeevshivah.me" style="color:#f0a500">rajeev@rajeevshivah.me</a></p>
         </div>
         <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-        <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+        <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
       </div>
-    `);
+    `, bm.sender);
   } catch (err) {
     console.error("❌ UPI pending email error:", err.message);
   }
 };
 
 const sendUpiConfirmedEmail = async (email, booking) => {
+  const bm = brandMeta(booking.brand);
   try {
     await sendEmail(email, `✅ Payment Verified — Session Confirmed!`, `
       <div style="${baseStyle}">
@@ -257,15 +262,16 @@ const sendUpiConfirmedEmail = async (email, booking) => {
           </a>
         </div>` : ""}
         <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-        <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+        <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
       </div>
-    `);
+    `, bm.sender);
   } catch (err) {
     console.error("❌ UPI confirmed email error:", err.message);
   }
 };
 
 const sendReminder = async (email, booking) => {
+  const bm = brandMeta(booking.brand);
   try {
     await sendEmail(email, `⏰ Reminder: Your session starts in 1 hour!`, `
       <div style="${baseStyle}">
@@ -278,7 +284,7 @@ const sendReminder = async (email, booking) => {
         </a>` : ""}
         <p style="color:#7a8499;font-size:13px;margin-top:24px">See you soon! ✨ — Rajeev Shivah</p>
       </div>
-    `);
+    `, bm.sender);
   } catch (err) {
     console.error("❌ Reminder email error:", err.message);
   }

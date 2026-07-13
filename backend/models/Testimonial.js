@@ -8,6 +8,8 @@ const testimonialSchema = new mongoose.Schema({
   rating: { type: Number, required: true, min: 1, max: 5 },
   text: { type: String, required: true, minlength: 20 },
   domain: { type: String, default: "Tech Mentorship" },
+  // Which site the review belongs to; old reviews (no field) count as tech
+  brand: { type: String, enum: ["tech", "meditation"], default: "tech", index: true },
   // Admin approves before showing publicly
   approved: { type: Boolean, default: false },
   // Optional: student photo URL

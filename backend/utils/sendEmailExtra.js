@@ -5,7 +5,9 @@
 // ============================================================
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-const sendEmail = async (to, subject, htmlContent) => {
+const brandMeta = require("./brandMeta");
+
+const sendEmail = async (to, subject, htmlContent, senderName) => {
   const response = await fetch(BREVO_API_URL, {
     method: "POST",
     headers: {
@@ -14,7 +16,7 @@ const sendEmail = async (to, subject, htmlContent) => {
       "api-key": process.env.BREVO_API_KEY,
     },
     body: JSON.stringify({
-      sender: { name: "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" },
+      sender: { name: senderName || "MentorHub by Rajeev Shivah", email: "rajeev@rajeevshivah.me" },
       to: [{ email: to }],
       subject,
       htmlContent,
@@ -32,6 +34,7 @@ const detailBox = `background:#131929;border:1px solid rgba(255,255,255,0.07);bo
 
 // ---- Reschedule notice ----
 const sendRescheduleEmail = async (email, booking, from) => {
+  const bm = brandMeta(booking.brand);
   await sendEmail(email, `🔄 Your session has been rescheduled`, `
     <div style="${baseStyle}">
       <h2 style="color:#f0a500;font-size:24px;margin-bottom:8px">Session rescheduled 🔄</h2>
@@ -45,9 +48,9 @@ const sendRescheduleEmail = async (email, booking, from) => {
         <a href="${booking.meetLink}" style="background:#00d4aa;color:#0b0f1a;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Join Meeting →</a>
       </div>` : ""}
       <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-      <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+      <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
     </div>
-  `);
+  `, bm.sender);
 };
 
 // ---- Password reset ----
@@ -86,6 +89,7 @@ const sendRescheduleRequestEmail = async (adminEmail, booking) => {
 
 // ---- Reschedule DECISION notice (to student) ----
 const sendRescheduleDecisionEmail = async (email, booking, decision) => {
+  const bm = brandMeta(booking.brand);
   const r = booking.rescheduleRequest || {};
   const accepted = decision === "accept";
   await sendEmail(email, accepted ? "✅ Your reschedule was approved" : "Your reschedule request — an update", `
@@ -102,9 +106,9 @@ const sendRescheduleDecisionEmail = async (email, booking, decision) => {
       </div>
       ${accepted && booking.meetLink ? `<div style="text-align:center;margin-top:8px"><a href="${booking.meetLink}" style="background:#00d4aa;color:#0b0f1a;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Join Meeting →</a></div>` : ""}
       <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-      <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+      <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
     </div>
-  `);
+  `, bm.sender);
 };
 
 // ---- Direct message from admin to student (real email) ----
@@ -128,6 +132,7 @@ const sendStudentMessage = async (email, name, subject, message, resources = [])
 
 // ---- Booking cancelled BY ADMIN → notify the student ----
 const sendCancellationEmail = async (email, booking, reason = "") => {
+  const bm = brandMeta(booking.brand);
   await sendEmail(email, `Your ${booking.packageName} session has been cancelled`, `
     <div style="${baseStyle}">
       <h2 style="color:#f0a500;font-size:24px;margin-bottom:8px">Session cancelled</h2>
@@ -140,12 +145,12 @@ const sendCancellationEmail = async (email, booking, reason = "") => {
       <p style="color:#e8eaf0;font-size:14px;line-height:1.7;margin-bottom:20px">
         If you already paid, your refund or a free rebooking will be arranged personally.
         Reply to this email or book a new slot anytime at
-        <a href="https://mentorshub.rajeevshivah.me" style="color:#00d4aa;text-decoration:none">mentorshub.rajeevshivah.me</a>.
+        <a href="https://${bm.url}" style="color:#00d4aa;text-decoration:none">${bm.url}</a>.
       </p>
       <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
-      <p style="color:#7a8499;font-size:12px;margin:0">MentorHub · rajeevshivah.me</p>
+      <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>
     </div>
-  `);
+  `, bm.sender);
 };
 
 // ---- Booking cancelled BY STUDENT → notify the admin ----
