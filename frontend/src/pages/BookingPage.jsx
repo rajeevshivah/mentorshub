@@ -11,6 +11,7 @@ import { useToast } from "../context/ToastContext";
 import { paymentAPI, bookingAPI, slotAPI } from "../utils/api";
 import { loadRazorpay, openRazorpay } from "../utils/razorpay";
 import PackageCard from "../components/PackageCard";
+import AuthModal from "../components/AuthModal";
 
 export default function BookingPage({ selectedPkgId, setPage }) {
   const { user } = useAuth();
@@ -27,6 +28,25 @@ export default function BookingPage({ selectedPkgId, setPage }) {
   const [payLoading, setPayLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("upi");
 const [upiTransactionId, setUpiTransactionId] = useState("");
+
+  // ---- Auth gate (Option B) ----
+  // Guests fill Steps 1–3 freely, but must log in BEFORE the Payment
+  // step so money never moves on an unauthenticated session and the
+  // booking is always tied to an account. `pendingAdvance` remembers
+  // that the modal was opened by the booking flow (not the navbar), so
+  // a successful login advances to Step 4 automatically.
+  const [showAuthGate, setShowAuthGate] = useState(false);
+  const [pendingAdvance, setPendingAdvance] = useState(false);
+
+  // When the user becomes authenticated while the gate is open,
+  // close it and move on to Payment.
+  useEffect(() => {
+    if (user && pendingAdvance) {
+      setShowAuthGate(false);
+      setPendingAdvance(false);
+      setStep(4);
+    }
+  }, [user, pendingAdvance]);
 
   // ---- Calendar state ----
   const now = new Date();
@@ -544,6 +564,14 @@ const handleUpiBooking = async () => {
                   showToast("Please fill all required fields (*)", "error");
                   return;
                 }
+                // Option B: require login before the Payment step.
+                // If not signed in, open the auth modal and advance
+                // only once authentication succeeds (see effect above).
+                if (!user) {
+                  setPendingAdvance(true);
+                  setShowAuthGate(true);
+                  return;
+                }
                 setStep(4);
               }}
               className="bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
@@ -720,13 +748,8 @@ const handleUpiBooking = async () => {
               className="underline">rajeev@rajeevshivah.me</a>
           </div>
 
-          {/* Login warning */}
-          {!user && (
-            <div className="bg-yellow-500/6 border border-yellow-500/20 rounded-xl p-3 mb-4
-              text-xs text-yellow-400">
-              ⚠️ Please login before completing your booking
-            </div>
-          )}
+          {/* Login gate (Option B) runs before this step, so any user
+              here is already authenticated — no login warning needed. */}
 
           {/* Action buttons */}
           <div className="flex gap-3">
@@ -753,6 +776,21 @@ const handleUpiBooking = async () => {
             Razorpay online payment coming soon
           </p>
         </div>
+      )}
+
+      {/* ---- Auth gate modal (Option B) ----
+          Opened when a guest tries to leave Step 3 (Details) for Payment.
+          AuthModal calls onClose() after a successful login/signup/Google;
+          the effect above sees `user` is now set and advances to Step 4.
+          If the guest dismisses without logging in, they simply stay on
+          Step 3 with all their entered details intact. */}
+      {showAuthGate && (
+        <AuthModal
+          onClose={() => {
+            setShowAuthGate(false);
+            setPendingAdvance(false);
+          }}
+        />
       )}
     </div>
   );
