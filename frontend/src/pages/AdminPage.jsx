@@ -9,6 +9,7 @@ import PackagesTab from "../components/PackagesTab";
 import RescheduleModal from "../components/RescheduleModal";
 import NotificationBell from "../components/NotificationBell";
 import ConfirmModal from "../components/ConfirmModal";
+import UpiQrSettings from "../components/UpiQrSettings";
 
 const TABS = [
   { id: "overview", icon: "📊", label: "Overview" },
@@ -988,6 +989,7 @@ const confirmUpiPayment = async () => {
               ============================================================ */}
               {tab === "payments" && (
                 <div>
+                  <UpiQrSettings showToast={showToast} askConfirm={setConfirmState} />
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="font-display text-2xl font-black">Payment Records</h2>
                     <div className="text-sm text-gray-400">

@@ -8,7 +8,10 @@ import { YEARS } from "../data/constants";
 import { packageAPI } from "../utils/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { paymentAPI, bookingAPI, slotAPI } from "../utils/api";
+import { paymentAPI, bookingAPI, slotAPI, settingsAPI } from "../utils/api";
+
+// Shown only if no QR has been uploaded from Admin → Payments (or the fetch fails).
+const DEFAULT_UPI_QR = "https://i.ibb.co/3ySRrMC6/Whats-App-Image-2026-06-09-at-12-22-51-AM.jpg";
 import { loadRazorpay, openRazorpay } from "../utils/razorpay";
 import PackageCard from "../components/PackageCard";
 import AuthModal from "../components/AuthModal";
@@ -28,6 +31,16 @@ export default function BookingPage({ selectedPkgId, setPage }) {
   const [payLoading, setPayLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("upi");
 const [upiTransactionId, setUpiTransactionId] = useState("");
+  const [upiQr, setUpiQr] = useState(null); // null = still loading
+
+  // Load the current UPI QR (uploaded from Admin → Payments).
+  useEffect(() => {
+    let alive = true;
+    settingsAPI.getUpiQr("tech")
+      .then((d) => { if (alive) setUpiQr(d.qr || DEFAULT_UPI_QR); })
+      .catch(() => { if (alive) setUpiQr(DEFAULT_UPI_QR); });
+    return () => { alive = false; };
+  }, []);
 
   // ---- Auth gate (Option B) ----
   // Guests fill Steps 1–3 freely, but must log in BEFORE the Payment
@@ -683,11 +696,15 @@ const handleUpiBooking = async () => {
                       Scan QR code with any UPI app
                     </p>
                     <div className="inline-block bg-white p-3 rounded-2xl">
-                      <img
-                        src="https://i.ibb.co/3ySRrMC6/Whats-App-Image-2026-06-09-at-12-22-51-AM.jpg"
-                        alt="UPI QR Code"
-                        className="w-48 h-48 object-contain rounded-lg"
-                      />
+                      {upiQr ? (
+                        <img
+                          src={upiQr}
+                          alt="UPI QR Code"
+                          className="w-48 h-48 object-contain rounded-lg"
+                        />
+                      ) : (
+                        <div className="w-48 h-48 rounded-lg bg-gray-100 animate-pulse" />
+                      )}
                     </div>
                     <div className="mt-3 bg-white/5 border border-white/10 rounded-xl
                       px-4 py-2 inline-block">

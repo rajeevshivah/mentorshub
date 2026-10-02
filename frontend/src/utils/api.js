@@ -95,6 +95,13 @@ export const adminAPI = {
   respondReschedule: (id, decision, response, meetLink = "") => request("PUT", `/bookings/${id}/reschedule-respond`, { decision, response, meetLink }),
 };
 
+// UPI QR shown on the payment step. brand: "tech" (MentorHub) | "meditation" (talkWithShivah)
+export const settingsAPI = {
+  getUpiQr: (brand = "tech") => request("GET", `/settings/upi-qr?brand=${brand}`),
+  setUpiQr: (brand, dataUrl) => request("PUT", "/settings/upi-qr", { brand, dataUrl }),
+  resetUpiQr: (brand) => request("DELETE", `/settings/upi-qr?brand=${brand}`),
+};
+
 export const testimonialAPI = {
   submit: (data) => request("POST", "/testimonials", data),
   getApproved: (brand = "tech") => request("GET", `/testimonials?brand=${brand}`),

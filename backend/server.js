@@ -15,6 +15,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const testimonialRoutes = require("./routes/testimonialRoutes");
 const packageRoutes = require("./routes/packageRoutes");   // Phase 1
 const cronRoutes = require("./routes/cronRoutes");          // Layer 2
+const settingsRoutes = require("./routes/settingsRoutes");  // UPI QR upload
 
 connectDB();
 
@@ -45,6 +46,10 @@ const limiter = rateLimit({
   message: { success: false, error: "Too many requests. Please wait a moment and try again." },
 });
 app.use("/api/", limiter);
+
+// Settings routes carry an uploaded QR image (base64), so they get a larger
+// body limit. Mounted BEFORE the global 100kb parser so this one handles them.
+app.use("/api/settings", express.json({ limit: "3mb" }), settingsRoutes);
 
 app.use(express.json());
 app.use(morgan("dev"));
