@@ -8,11 +8,11 @@ import { YEARS } from "../data/constants";
 import { packageAPI } from "../utils/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { paymentAPI, bookingAPI, slotAPI, settingsAPI } from "../utils/api";
+import { rzpAPI, bookingAPI, slotAPI, settingsAPI } from "../utils/api";
 
 // Shown only if no QR has been uploaded from Admin → Payments (or the fetch fails).
 const DEFAULT_UPI_QR = "https://i.ibb.co/3ySRrMC6/Whats-App-Image-2026-06-09-at-12-22-51-AM.jpg";
-import { loadRazorpay, openRazorpay } from "../utils/razorpay";
+import { loadRazorpay, openCheckout } from "../utils/razorpay";
 import PackageCard from "../components/PackageCard";
 import AuthModal from "../components/AuthModal";
 
@@ -32,6 +32,21 @@ export default function BookingPage({ selectedPkgId, setPage }) {
   const [paymentMethod, setPaymentMethod] = useState("upi");
 const [upiTransactionId, setUpiTransactionId] = useState("");
   const [upiQr, setUpiQr] = useState(null); // null = still loading
+  // Razorpay on/off comes from the backend (keys set on Render or not).
+  // While false, the page behaves exactly as before: manual UPI only.
+  const [onlineEnabled, setOnlineEnabled] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    rzpAPI.config()
+      .then((d) => {
+        if (!alive || !d.enabled) return;
+        setOnlineEnabled(true);
+        setPaymentMethod("razorpay");   // online is the default when available
+      })
+      .catch(() => {});                 // backend unreachable → UPI only
+    return () => { alive = false; };
+  }, []);
 
   // Load the current UPI QR (uploaded from Admin → Payments).
   useEffect(() => {
@@ -156,56 +171,65 @@ const [upiTransactionId, setUpiTransactionId] = useState("");
     setAvailableSlots([]);
   };
 
-  // ---- Payment handler ----
-  const handlePayment = async () => {
+  const bookingDate = () =>
+    `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`;
+
+  // ---- Online payment (Razorpay) ----
+  // 1. server creates the order from the DB price and holds the slot
+  // 2. Razorpay popup
+  // 3. server verifies the signature + payment and confirms the booking
+  //    (a webhook does the same in the background if this tab closes)
+  const handleOnlinePay = async () => {
     if (!user) {
       showToast("Please login first to book a session", "error");
       return;
     }
     setPayLoading(true);
     try {
-      const order = await paymentAPI.createOrder(pkg._id);
+      const order = await rzpAPI.order({
+        packageId: String(pkg._id),
+        date: bookingDate(),
+        timeSlot: selectedSlot,
+        studentInfo: form,
+      });
       const loaded = await loadRazorpay();
       if (!loaded) {
-        showToast("Failed to load payment gateway", "error");
+        showToast("Couldn't load the payment window. Check your connection, or pay via UPI.", "error");
         setPayLoading(false);
         return;
       }
-      openRazorpay({
+      openCheckout({
         order,
-        pkg,
-        user,
-        form,
         onSuccess: async (response) => {
           try {
-            await paymentAPI.verify({
-              razorpayOrderId: response.razorpay_order_id,
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpaySignature: response.razorpay_signature,
-              paymentDbId: order.paymentId,
-            });
-            await bookingAPI.create({
-              packageId: String(pkg._id),
-              date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
-              timeSlot: selectedSlot,
-              studentInfo: form,
-              paymentId: order.paymentId,
-            });
-            showToast("Payment successful! Check your email for Meet link 🎉");
+            const res = await rzpAPI.verify(response);
+            if (res.conflict || res.pending) {
+              showToast(res.message, res.conflict ? "error" : "success");
+            } else {
+              showToast("Payment successful! Your session is confirmed. Meet link will follow by email 🎉");
+            }
             setPage("dashboard");
           } catch (err) {
-            showToast(err.message || "Booking failed. Contact support.", "error");
+            showToast(err.message || "Payment received. Your booking will confirm in a few minutes.", "error");
+            setPage("dashboard");
           } finally {
             setPayLoading(false);
           }
         },
-        onError: (msg) => {
-          showToast(msg, "error");
+        onDismiss: () => {
+          showToast(`Payment not completed. Your slot stays reserved for ${order.holdMinutes || 15} minutes.`, "error");
           setPayLoading(false);
         },
+        onFailed: (msg) => showToast(`${msg}. You can try again in the same window.`, "error"),
       });
     } catch (err) {
       showToast(err.message || "Something went wrong", "error");
+      // Slot got taken (or blocked) meanwhile → send them back to pick another
+      if (/slot|booked|available|notice/i.test(err.message || "")) {
+        setSelectedSlot(null);
+        setStep(2);
+        fetchSlots();
+      }
       setPayLoading(false);
     }
   };
@@ -257,7 +281,7 @@ const handleUpiBooking = async () => {
   try {
     await bookingAPI.create({
       packageId: String(pkg._id),
-      date: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`,
+      date: bookingDate(),
       timeSlot: selectedSlot,
       studentInfo: form,
       paymentMethod: "upi",
@@ -630,38 +654,72 @@ const handleUpiBooking = async () => {
           {/* ---- Payment Options ---- */}
           <div className="space-y-4 mb-4">
 
-            {/* Option 1 — Razorpay (coming soon) */}
-            <div className="relative border border-white/7 rounded-2xl p-5 opacity-50">
-              {/* Coming soon overlay */}
-              <div className="absolute top-3 right-3 bg-yellow-500/15 border border-yellow-500/30
-                text-yellow-400 text-xs px-2 py-0.5 rounded-full font-medium">
-                Coming Soon
-              </div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center
-                  font-bold text-white text-xs flex-shrink-0">
-                  R
-                </div>
-                <div>
-                  <div className="font-semibold text-sm">Pay via Razorpay</div>
-                  <div className="text-xs text-gray-400">Cards · Net Banking · EMI · Wallets</div>
-                </div>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {["UPI", "Cards", "Net Banking", "EMI", "Wallets"].map((m) => (
-                  <span key={m} className="bg-white/6 text-gray-400 text-xs px-2.5 py-1 rounded-md">
-                    {m}
-                  </span>
-                ))}
-              </div>
-              <button
-                disabled
-                className="w-full mt-4 bg-white/10 text-gray-500 font-display font-bold
-                  py-3 rounded-xl text-sm cursor-not-allowed"
+            {/* Option 1 — Razorpay (live when keys are set on the backend) */}
+            {onlineEnabled ? (
+              <div className={`border rounded-2xl p-5 transition-all cursor-pointer
+                ${paymentMethod === "razorpay"
+                  ? "border-yellow-500/40 bg-yellow-500/4"
+                  : "border-white/10 hover:border-white/20"}`}
+                onClick={() => setPaymentMethod("razorpay")}
               >
-                Online Payment — Coming Soon
-              </button>
-            </div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center
+                      font-bold text-white text-xs flex-shrink-0">
+                      ₹
+                    </div>
+                    <div>
+                      <div className="font-semibold text-sm">Pay online</div>
+                      <div className="text-xs text-green-400">✓ Instant confirmation · Secured by Razorpay</div>
+                    </div>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${
+                    paymentMethod === "razorpay"
+                      ? "border-yellow-400 bg-yellow-400"
+                      : "border-white/30"
+                  }`} />
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {["UPI", "Cards", "Net Banking", "Wallets", "International cards"].map((m) => (
+                    <span key={m} className="bg-white/6 text-gray-300 text-xs px-2.5 py-1 rounded-md">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="relative border border-white/7 rounded-2xl p-5 opacity-50">
+                {/* Coming soon overlay */}
+                <div className="absolute top-3 right-3 bg-yellow-500/15 border border-yellow-500/30
+                  text-yellow-400 text-xs px-2 py-0.5 rounded-full font-medium">
+                  Coming Soon
+                </div>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center
+                    font-bold text-white text-xs flex-shrink-0">
+                    R
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm">Pay via Razorpay</div>
+                    <div className="text-xs text-gray-400">Cards · Net Banking · EMI · Wallets</div>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {["UPI", "Cards", "Net Banking", "EMI", "Wallets"].map((m) => (
+                    <span key={m} className="bg-white/6 text-gray-400 text-xs px-2.5 py-1 rounded-md">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  disabled
+                  className="w-full mt-4 bg-white/10 text-gray-500 font-display font-bold
+                    py-3 rounded-xl text-sm cursor-not-allowed"
+                >
+                  Online Payment — Coming Soon
+                </button>
+              </div>
+            )}
 
             {/* Option 2 — UPI Manual (active) */}
             <div className={`border rounded-2xl p-5 transition-all cursor-pointer
@@ -677,8 +735,8 @@ const handleUpiBooking = async () => {
                     📱
                   </div>
                   <div>
-                    <div className="font-semibold text-sm">Pay via UPI</div>
-                    <div className="text-xs text-green-400">✓ Available now · Confirmed within 2 hours</div>
+                    <div className="font-semibold text-sm">{onlineEnabled ? "Pay via UPI QR (manual)" : "Pay via UPI"}</div>
+                    <div className="text-xs text-green-400">{onlineEnabled ? "Scan, pay, enter the UTR · Confirmed within 2 hours" : "✓ Available now · Confirmed within 2 hours"}</div>
                   </div>
                 </div>
                 <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${
@@ -777,21 +835,35 @@ const handleUpiBooking = async () => {
             >
               ← Back
             </button>
-            <button
-              onClick={handleUpiBooking}
-              disabled={payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()}
-              className={`flex-[2] bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
-                font-display font-bold py-3 rounded-xl transition-all
-                ${payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()
-                  ? "opacity-40 cursor-not-allowed"
-                  : "hover:-translate-y-0.5"}`}
-            >
-              {payLoading ? "Submitting..." : "Submit Booking 🚀"}
-            </button>
+            {paymentMethod === "razorpay" && onlineEnabled ? (
+              <button
+                onClick={handleOnlinePay}
+                disabled={payLoading || !pkg._id}
+                className={`flex-[2] bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
+                  font-display font-bold py-3 rounded-xl transition-all
+                  ${payLoading || !pkg._id ? "opacity-40 cursor-not-allowed" : "hover:-translate-y-0.5"}`}
+              >
+                {payLoading ? "Processing..." : `Pay ₹${pkg.price} securely 🔒`}
+              </button>
+            ) : (
+              <button
+                onClick={handleUpiBooking}
+                disabled={payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()}
+                className={`flex-[2] bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
+                  font-display font-bold py-3 rounded-xl transition-all
+                  ${payLoading || paymentMethod !== "upi" || !upiTransactionId.trim()
+                    ? "opacity-40 cursor-not-allowed"
+                    : "hover:-translate-y-0.5"}`}
+              >
+                {payLoading ? "Submitting..." : "Submit Booking 🚀"}
+              </button>
+            )}
           </div>
-          <p className="text-center text-xs text-gray-500 mt-3">
-            Razorpay online payment coming soon
-          </p>
+          {!onlineEnabled && (
+            <p className="text-center text-xs text-gray-500 mt-3">
+              Razorpay online payment coming soon
+            </p>
+          )}
         </div>
       )}
 

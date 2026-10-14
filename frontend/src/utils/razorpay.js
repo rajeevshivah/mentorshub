@@ -1,6 +1,8 @@
 // ============================================================
-// Razorpay payment helper
-// Loads script and opens checkout in one function call
+// Razorpay checkout helper
+// The key id comes from the backend (/api/rzp/order), so no Vercel
+// env var is needed. Amount, name and colours also come from the
+// backend, which reads them from the database.
 // ============================================================
 
 export const loadRazorpay = () =>
@@ -13,30 +15,28 @@ export const loadRazorpay = () =>
     document.body.appendChild(script);
   });
 
-export const openRazorpay = ({ order, pkg, user, form, onSuccess, onError }) => {
+// order: response of POST /api/rzp/order
+// onSuccess({ razorpay_order_id, razorpay_payment_id, razorpay_signature })
+// onDismiss() — student closed the popup without paying
+// onFailed(message) — a payment attempt failed (they may retry inside the popup)
+export const openCheckout = ({ order, onSuccess, onDismiss, onFailed }) => {
   const rzp = new window.Razorpay({
-    key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+    key: order.keyId,
     amount: order.amount,
     currency: order.currency,
     order_id: order.orderId,
-    name: "MentorHub by Minicimextech",
-    description: pkg.name,
-    image: "https://minicimextech.com/logo.jpeg",
-    prefill: {
-      name: user.name,
-      email: user.email,
-      contact: user.phone || form.phone,
-    },
-    theme: { color: "#f0a500" },
+    name: order.name,
+    description: order.description,
+    prefill: order.prefill,
+    theme: { color: order.themeColor },
     handler: (response) => onSuccess(response),
     modal: {
-      ondismiss: () => onError("Payment cancelled"),
+      ondismiss: () => onDismiss && onDismiss(),
+      confirm_close: true,
     },
   });
-
   rzp.on("payment.failed", (response) => {
-    onError(response.error.description || "Payment failed");
+    onFailed && onFailed(response?.error?.description || "Payment failed");
   });
-
   rzp.open();
 };

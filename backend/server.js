@@ -9,13 +9,13 @@ const connectDB = require("./config/db");
 
 const authRoutes = require("./routes/authRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
-const paymentRoutes = require("./routes/paymentRoutes");
 const slotRoutes = require("./routes/slotRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const testimonialRoutes = require("./routes/testimonialRoutes");
 const packageRoutes = require("./routes/packageRoutes");   // Phase 1
 const cronRoutes = require("./routes/cronRoutes");          // Layer 2
 const settingsRoutes = require("./routes/settingsRoutes");  // UPI QR upload
+const razorpayRoutes = require("./routes/razorpay");        // Razorpay online payments
 
 connectDB();
 
@@ -51,17 +51,21 @@ app.use("/api/", limiter);
 // body limit. Mounted BEFORE the global 100kb parser so this one handles them.
 app.use("/api/settings", express.json({ limit: "3mb" }), settingsRoutes);
 
+// Razorpay webhook must receive the RAW body (its signature is computed on
+// the exact bytes). Registered BEFORE express.json so the JSON parser skips it.
+app.use("/api/rzp/webhook", express.raw({ type: "*/*", limit: "1mb" }));
+
 app.use(express.json());
 app.use(morgan("dev"));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
-app.use("/api/payments", paymentRoutes);
 app.use("/api/slots", slotRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/cron", cronRoutes);
+app.use("/api/rzp", razorpayRoutes);
 
 app.get("/", (req, res) => {
   res.json({ status: "ok", message: "MentorHub API is running 🚀" });

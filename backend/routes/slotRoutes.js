@@ -5,6 +5,7 @@ const Booking = require("../models/Booking");
 const BlockedDate = require("../models/BlockedDate");
 const { tooSoon } = require("../utils/slotRules");
 const { ACTIVE_BOOKING_STATUSES } = require("../utils/bookingConstants");
+const { heldTimesOn } = require("../utils/slotHold");
 
 // All active slots
 router.get("/", async (req, res) => {
@@ -35,7 +36,8 @@ router.get("/available", async (req, res) => {
       date,
       status: { $in: ACTIVE_BOOKING_STATUSES },
     }).select("timeSlot");
-    const bookedTimes = bookedSlots.map((b) => b.timeSlot);
+    // Slots someone is paying for right now (Razorpay checkout open) count as taken
+    const bookedTimes = [...bookedSlots.map((b) => b.timeSlot), ...(await heldTimesOn(date))];
 
     const partialBlock = await BlockedDate.findOne({ date, allDay: false });
     const partialBlockedSlots = partialBlock?.blockedSlots || [];

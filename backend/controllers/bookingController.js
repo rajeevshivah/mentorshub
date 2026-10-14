@@ -1,42 +1,48 @@
 const Booking = require("../models/Booking");
-const Payment = require("../models/Payment");
 const Package = require("../models/Package");
-const { ACTIVE_BOOKING_STATUSES } = require("../utils/bookingConstants");
 const {
-  sendBookingConfirmation,
   sendUpiPendingEmail,
   sendUpiConfirmedEmail,
+  sendAdminNewBookingEmail,
 } = require("../utils/sendEmail");
 const { sendRescheduleEmail, sendRescheduleRequestEmail, sendRescheduleDecisionEmail } = require("../utils/sendEmailExtra");
 
-// Helper: is this slot already taken on this date?
+// Slot availability (bookings + live Razorpay checkout holds) and
+// blocked dates / 2-hour notice rules
 const { slotUnavailableReason } = require("../utils/slotRules");
+const { slotTaken } = require("../utils/slotHold");
 
-async function slotTaken(date, timeSlot, excludeId = null) {
-  const query = {
-    date,
-    timeSlot,
-    status: { $in: ACTIVE_BOOKING_STATUSES },
-  };
-  if (excludeId) query._id = { $ne: excludeId };
-  return await Booking.findOne(query);
-}
+// UPI reference: letters/digits only, 6–35 chars (UPI UTRs are 12 digits,
+// some apps show longer refs). Spaces and dashes are stripped first.
+const normalizeUtr = (v) => String(v || "").replace(/[\s-]/g, "").toUpperCase();
+const UTR_RX = /^[A-Z0-9]{6,35}$/;
 
 // ============================================================
-// CREATE BOOKING  (hardened)
+// CREATE BOOKING — manual UPI only.
+// Online (Razorpay) bookings are created by routes/razorpay.js after
+// the payment is verified; they never come through here.
 // - price is recomputed from the DB package (never trusted from client)
-// - for razorpay: the referenced payment MUST be `paid` AND owned by user
-// - slot conflict uses the shared ACTIVE_BOOKING_STATUSES set
+// - the same UTR can't be used for two live bookings
+// - slot conflict covers bookings AND open Razorpay checkouts
 // ============================================================
 exports.createBooking = async (req, res) => {
   try {
-    const {
-      packageId, date, timeSlot, studentInfo, paymentId,
-      paymentMethod, upiTransactionId, brand,
-    } = req.body;
+    const { packageId, date, timeSlot, studentInfo, paymentMethod } = req.body;
 
     if (!packageId || !date || !timeSlot) {
       return res.status(400).json({ success: false, error: "Missing required fields" });
+    }
+    if (paymentMethod && paymentMethod !== "upi") {
+      return res.status(400).json({ success: false, error: "Online payments go through checkout. Please refresh the page and try again." });
+    }
+
+    const utr = normalizeUtr(req.body.upiTransactionId);
+    if (!UTR_RX.test(utr)) {
+      return res.status(400).json({ success: false, error: "Please enter a valid UPI transaction ID (the 12-digit UTR / reference number from your UPI app)" });
+    }
+    const utrUsed = await Booking.findOne({ upiTransactionId: utr, status: { $ne: "cancelled" } });
+    if (utrUsed) {
+      return res.status(409).json({ success: false, error: "This UPI transaction ID has already been used for another booking. Please check it, or email rajeev@rajeevshivah.me" });
     }
 
     // ---- 1. Resolve the package from the DB (authoritative price/name) ----
@@ -46,7 +52,7 @@ exports.createBooking = async (req, res) => {
     }
 
     // ---- 2. Slot conflict ----
-    const conflict = await slotTaken(date, timeSlot);
+    const conflict = await slotTaken(date, timeSlot, { excludeUserId: req.user._id });
     if (conflict) {
       return res.status(409).json({
         success: false,
@@ -61,60 +67,28 @@ exports.createBooking = async (req, res) => {
       return res.status(409).json({ success: false, error: unavailable });
     }
 
-    const method = paymentMethod === "upi" ? "upi" : "razorpay";
-    let status;
-
-    if (method === "razorpay") {
-      // ---- 3. Verify the payment is real, paid, and belongs to this user ----
-      if (!paymentId) {
-        return res.status(400).json({ success: false, error: "Missing payment reference" });
-      }
-      const payment = await Payment.findById(paymentId);
-      if (!payment) {
-        return res.status(400).json({ success: false, error: "Payment not found" });
-      }
-      if (payment.user.toString() !== req.user.id) {
-        return res.status(403).json({ success: false, error: "Payment does not belong to you" });
-      }
-      if (payment.status !== "paid") {
-        return res.status(400).json({ success: false, error: "Payment not completed" });
-      }
-      // amount paid must match the package price (in paise)
-      if (payment.amount !== Math.round(pkg.price * 100)) {
-        return res.status(400).json({ success: false, error: "Payment amount mismatch" });
-      }
-      status = "confirmed";
-    } else {
-      // UPI — admin verifies manually later
-      status = "pending_upi";
-    }
-
+    // UPI — admin verifies manually, then confirms with a Meet link
     const booking = await Booking.create({
       user: req.user.id,
       packageId: String(pkg._id),
       packageName: pkg.name,         // from DB, not client
       packagePrice: pkg.price,       // from DB, not client
       packageDuration: pkg.duration, // from DB, not client
-      brand: brand || pkg.brand || "tech",
+      brand: pkg.brand || "tech",    // from DB, not client
       date, timeSlot, studentInfo,
-      payment: paymentId || null,
       meetLink: null,                // set per-booking by admin on confirm
-      status,
-      paymentMethod: method,
-      upiTransactionId: method === "upi" ? (upiTransactionId || null) : null,
+      status: "pending_upi",
+      paymentMethod: "upi",
+      upiTransactionId: utr,
     });
 
-    // Link payment -> booking
-    if (paymentId) {
-      await Payment.findByIdAndUpdate(paymentId, { booking: booking._id });
-    }
-
     // Emails (fire-and-forget)
-    if (status === "confirmed") {
-      sendBookingConfirmation(studentInfo.email, booking).catch((e) =>
-        console.error("Email error:", e.message));
-    } else {
+    if (studentInfo?.email) {
       sendUpiPendingEmail(studentInfo.email, booking).catch((e) =>
+        console.error("Email error:", e.message));
+    }
+    if (process.env.ADMIN_EMAIL) {
+      sendAdminNewBookingEmail(process.env.ADMIN_EMAIL, booking).catch((e) =>
         console.error("Email error:", e.message));
     }
 
@@ -194,8 +168,8 @@ exports.rescheduleBooking = async (req, res) => {
       return res.status(400).json({ success: false, error: "That's the same slot" });
     }
 
-    // New slot must be free
-    const conflict = await slotTaken(date, timeSlot, booking._id);
+    // New slot must be free (bookings + open checkouts)
+    const conflict = await slotTaken(date, timeSlot, { excludeBookingId: booking._id });
     if (conflict) {
       return res.status(409).json({ success: false, error: "That slot is already booked" });
     }
@@ -283,7 +257,7 @@ exports.respondToReschedule = async (req, res) => {
 
     if (decision === "accept") {
       // make sure the requested slot is still free
-      const conflict = await slotTaken(req_.requestedDate, req_.requestedSlot, booking._id);
+      const conflict = await slotTaken(req_.requestedDate, req_.requestedSlot, { excludeBookingId: booking._id });
       if (conflict) {
         return res.status(409).json({ success: false, error: "Requested slot is no longer available" });
       }

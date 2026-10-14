@@ -22,7 +22,10 @@ const bookingSchema = new mongoose.Schema({
   },
   paymentMethod: { type: String, enum: ["razorpay", "upi", "manual"], default: "razorpay" },
   upiTransactionId: { type: String },
-  payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+  payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },   // legacy v1 Razorpay (unused)
+  // Razorpay order this booking was created from. Unique, so verify +
+  // webhook arriving together can never create two bookings for one payment.
+  onlinePayment: { type: mongoose.Schema.Types.ObjectId, ref: "OnlinePayment" },
   meetLink: { type: String },
   adminNotes: { type: String },         // private notes (admin only)
   sessionNotes: { type: String },       // notes SHARED with the student after session
@@ -62,4 +65,9 @@ const bookingSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 bookingSchema.index({ date: 1, timeSlot: 1, status: 1 });
+bookingSchema.index(
+  { onlinePayment: 1 },
+  { unique: true, partialFilterExpression: { onlinePayment: { $exists: true } } }
+);
+bookingSchema.index({ upiTransactionId: 1 });
 module.exports = mongoose.model("Booking", bookingSchema);

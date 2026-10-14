@@ -46,10 +46,17 @@ export const bookingAPI = {
   reschedule: (id, date, timeSlot, message) => request("PUT", `/bookings/${id}/reschedule`, { date, timeSlot, message }),
 };
 
-export const paymentAPI = {
-  // amount no longer sent — server uses packageId
-  createOrder: (packageId) => request("POST", "/payments/create-order", { packageId }),
-  verify: (data) => request("POST", "/payments/verify", data),
+// Razorpay online payments. Amount always comes from the server.
+export const rzpAPI = {
+  config: () => request("GET", "/rzp/config"),
+  // { packageId, date, timeSlot, studentInfo } → order for checkout (also holds the slot)
+  order: (data) => request("POST", "/rzp/order", data),
+  // { razorpay_order_id, razorpay_payment_id, razorpay_signature }
+  verify: (data) => request("POST", "/rzp/verify", data),
+  // admin
+  adminPayments: (status = "") => request("GET", `/rzp/admin/payments${status ? `?status=${status}` : ""}`),
+  rebook: (id, date, timeSlot) => request("POST", `/rzp/admin/payments/${id}/rebook`, { date, timeSlot }),
+  resolve: (id, note = "") => request("PUT", `/rzp/admin/payments/${id}/resolve`, { note }),
 };
 
 export const slotAPI = {
@@ -75,8 +82,7 @@ export const adminAPI = {
   addResource: (id, title, url, type) => request("POST", `/admin/bookings/${id}/resource`, { title, url, type }),
   removeResource: (id, resourceId) => request("DELETE", `/admin/bookings/${id}/resource/${resourceId}`),
   createManualBooking: (data) => request("POST", "/admin/bookings/manual", data),
-  getPayments: () => request("GET", "/admin/payments"),
-  refundPayment: (id, opts = {}) => request("PUT", `/payments/${id}/refund`, opts),
+  sendMeetLink: (id, meetLink) => request("POST", `/admin/bookings/${id}/meet-link`, { meetLink }),
   getSlots: () => request("GET", "/admin/slots"),
   addSlot: (time) => request("POST", "/admin/slots", { time }),
   toggleSlot: (id, isActive) => request("PUT", `/admin/slots/${id}`, { isActive }),

@@ -244,6 +244,11 @@ function OverviewTab({ upcoming, completed, bookings, loading, setPage, onResche
                     📹 Join Meet
                   </a>
                 )}
+                {!b.meetLink && b.status === "confirmed" && (
+                  <span className="bg-white/5 border border-white/10 text-gray-400 px-3 py-1.5 rounded-lg text-xs">
+                    📹 Meet link will be emailed before the session
+                  </span>
+                )}
               </div>
 
               {b.rescheduleRequest?.status === "pending" && (

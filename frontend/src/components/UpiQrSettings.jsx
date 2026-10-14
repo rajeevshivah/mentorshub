@@ -2,7 +2,7 @@
 // UpiQrSettings.jsx — upload / replace the UPI QR shown on the
 // payment step. One QR per brand:
 //   tech       → MentorHub booking page (live as soon as you save)
-//   meditation → talkWithShivah (used once that site reads it)
+//   meditation → talkWithShivah booking page
 // The image is resized in the browser and stored in MongoDB, so
 // no Cloudinary or other image host is needed.
 // ============================================================
@@ -11,7 +11,7 @@ import { settingsAPI } from "../utils/api";
 
 const BRANDS = [
   { id: "tech", label: "MentorHub", icon: "💻", note: "Shown on the MentorHub payment step" },
-  { id: "meditation", label: "talkWithShivah", icon: "🧘", note: "Stored for the talkWithShivah site" },
+  { id: "meditation", label: "talkWithShivah", icon: "🧘", note: "Shown on the talkWithShivah payment step" },
 ];
 
 const MAX_SIDE = 800;           // px — plenty for a phone to scan

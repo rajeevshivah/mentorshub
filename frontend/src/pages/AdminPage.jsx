@@ -10,6 +10,7 @@ import RescheduleModal from "../components/RescheduleModal";
 import NotificationBell from "../components/NotificationBell";
 import ConfirmModal from "../components/ConfirmModal";
 import UpiQrSettings from "../components/UpiQrSettings";
+import OnlinePaymentsPanel from "../components/OnlinePaymentsPanel";
 
 const TABS = [
   { id: "overview", icon: "📊", label: "Overview" },
@@ -54,7 +55,6 @@ export default function AdminPage({ setPage }) {
   // ---- Data ----
   const [stats, setStats] = useState(null);
   const [bookings, setBookings] = useState([]);
-  const [payments, setPayments] = useState([]);
   const [slots, setSlots] = useState([]);
   const [students, setStudents] = useState([]);
   const [blockedDates, setBlockedDates] = useState([]);
@@ -85,7 +85,8 @@ export default function AdminPage({ setPage }) {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [sendingEmail, setSendingEmail] = useState(false);
-  const [meetModal, setMeetModal] = useState(null);
+  const [meetModal, setMeetModal] = useState(null);       // booking id
+  const [meetMode, setMeetMode] = useState("upi");        // "upi" = confirm UPI + link · "link" = send/update link
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [respondTarget, setRespondTarget] = useState(null);  // { booking, decision }
   const [respondText, setRespondText] = useState("");
@@ -123,17 +124,15 @@ export default function AdminPage({ setPage }) {
   const fetchAll = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [s, b, p, sl, st, bd] = await Promise.all([
+      const [s, b, sl, st, bd] = await Promise.all([
         adminAPI.getStats(),
         adminAPI.getBookings(),
-        adminAPI.getPayments(),
         adminAPI.getSlots(),
         adminAPI.getStudents(),
         adminAPI.getBlockedDates(),
       ]);
       setStats(s.stats);
       setBookings(b.bookings);
-      setPayments(p.payments);
       setSlots(sl.slots);
       setStudents(st.students);
       setBlockedDates(bd.blockedDates);
@@ -270,7 +269,24 @@ export default function AdminPage({ setPage }) {
 
   // ---- Confirm UPI payment ----
 const confirmUpiPayment = async () => {
-  const link = meetLinkInput.trim() || "https://meet.google.com/mentorshub-session";
+  const link = meetLinkInput.trim();
+  if (!/^https?:\/\/\S+$/i.test(link) || /^https:\/\/(meet\.google\.com|zoom\.us\/j)\/?$/i.test(link)) {
+    showToast("Paste the full meeting link first", "error");
+    return;
+  }
+  // Online-paid booking (already confirmed): just save + email the link
+  if (meetMode === "link") {
+    try {
+      const d = await adminAPI.sendMeetLink(meetModal, link);
+      showToast(d.emailed ? "Meet link saved and emailed to the student ✅" : (d.error || "Link saved (no email on file)"), d.emailed ? "success" : "error");
+      setMeetModal(null);
+      setMeetLinkInput("");
+      await fetchAll(true);
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+    return;
+  }
   try {
     const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
     const response = await fetch(
@@ -539,6 +555,48 @@ const confirmUpiPayment = async () => {
                     ))}
                   </div>
 
+                  {/* Online-paid bookings waiting for a Meet link */}
+                  {stats.needMeetLink > 0 && (
+                    <div className="bg-teal-500/8 border border-teal-500/25 rounded-2xl p-4 mb-4
+                      flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">📹</span>
+                        <div>
+                          <div className="font-display font-bold text-teal-400">
+                            {stats.needMeetLink} confirmed booking{stats.needMeetLink > 1 ? "s" : ""} need a Meet link
+                          </div>
+                          <div className="text-xs text-gray-400">Paid and confirmed. Send the link from the booking card.</div>
+                        </div>
+                      </div>
+                      <button onClick={() => { setTab("bookings"); setFilterStatus("confirmed"); }}
+                        className="bg-teal-500/15 border border-teal-500/30 text-teal-400
+                          px-4 py-2 rounded-xl text-xs font-display font-bold hover:bg-teal-500/25 transition-all whitespace-nowrap">
+                        Send links →
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Paid online but slot was taken */}
+                  {stats.paymentConflicts > 0 && (
+                    <div className="bg-red-500/8 border border-red-500/25 rounded-2xl p-4 mb-4
+                      flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">⚠️</span>
+                        <div>
+                          <div className="font-display font-bold text-red-400">
+                            {stats.paymentConflicts} online payment{stats.paymentConflicts > 1 ? "s" : ""} need attention
+                          </div>
+                          <div className="text-xs text-gray-400">Paid, but the slot was taken. Rebook or refund.</div>
+                        </div>
+                      </div>
+                      <button onClick={() => setTab("payments")}
+                        className="bg-red-500/15 border border-red-500/30 text-red-400
+                          px-4 py-2 rounded-xl text-xs font-display font-bold hover:bg-red-500/25 transition-all whitespace-nowrap">
+                        Fix now →
+                      </button>
+                    </div>
+                  )}
+
                   {/* Pending UPI alert */}
                   {bookings.filter(b => b.status === "pending_upi").length > 0 && (
                     <div className="bg-orange-500/8 border border-orange-500/25 rounded-2xl p-4 mb-6
@@ -592,7 +650,8 @@ const confirmUpiPayment = async () => {
                       email: b.user?.email || b.studentInfo?.email,
                       name: b.user?.name || b.studentInfo?.name,
                     })}
-                    onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
+                    onConfirmUpi={(id) => { setMeetModal(id); setMeetMode("upi"); setMeetLinkInput(""); }}
+                    onSendMeetLink={(bk) => { setMeetModal(bk._id); setMeetMode("link"); setMeetLinkInput(bk.meetLink || ""); }}
                     onReschedule={(bk) => setRescheduleTarget(bk)}
                     onRespondReschedule={(bk, decision) => setRespondTarget({ booking: bk, decision })}
                     onAddResource={handleAddResource}
@@ -691,7 +750,8 @@ const confirmUpiPayment = async () => {
                             setEmailSubject("");
                             setEmailBody("");
                           }}
-                          onConfirmUpi={(id) => { setMeetModal(id); setMeetLinkInput(""); }}
+                          onConfirmUpi={(id) => { setMeetModal(id); setMeetMode("upi"); setMeetLinkInput(""); }}
+                    onSendMeetLink={(bk) => { setMeetModal(bk._id); setMeetMode("link"); setMeetLinkInput(bk.meetLink || ""); }}
                     onReschedule={(bk) => setRescheduleTarget(bk)}
                     onRespondReschedule={(bk, decision) => setRespondTarget({ booking: bk, decision })}
                     onAddResource={handleAddResource}
@@ -990,58 +1050,11 @@ const confirmUpiPayment = async () => {
               {tab === "payments" && (
                 <div>
                   <UpiQrSettings showToast={showToast} askConfirm={setConfirmState} />
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="font-display text-2xl font-black">Payment Records</h2>
-                    <div className="text-sm text-gray-400">
-                      Total: <span className="text-teal-400 font-bold">
-                        ₹{payments.filter(p => p.status === "paid").reduce((s, p) => s + p.amount / 100, 0).toLocaleString("en-IN")}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="bg-white/2 border border-white/7 rounded-2xl overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-white/7 bg-white/2">
-                            {["Student","Package","Amount","Payment ID","Method","Status","Date"].map((h) => (
-                              <th key={h} className="text-left px-4 py-3 text-xs text-gray-400
-                                font-semibold font-display uppercase tracking-wide whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {payments.map((p) => (
-                            <tr key={p._id} className="border-b border-white/4 hover:bg-white/2 transition-all">
-                              <td className="px-4 py-3">
-                                <div className="font-medium">{p.user?.name}</div>
-                                <div className="text-xs text-gray-400">{p.user?.email}</div>
-                              </td>
-                              <td className="px-4 py-3 text-gray-300 text-xs whitespace-nowrap">{p.booking?.packageName || "—"}</td>
-                              <td className="px-4 py-3 text-yellow-400 font-bold whitespace-nowrap">₹{(p.amount / 100).toLocaleString("en-IN")}</td>
-                              <td className="px-4 py-3">
-                                <span className="font-mono text-xs text-gray-400">
-                                  {p.razorpayPaymentId ? p.razorpayPaymentId.slice(0, 18) + "..." : "—"}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className="bg-white/6 text-gray-300 text-xs px-2 py-1 rounded-md">{p.method || "UPI"}</span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-1 rounded-full text-xs font-medium border
-                                  ${p.status === "paid" ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>
-                                  {p.status}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                                {new Date(p.createdAt).toLocaleDateString("en-IN")}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {payments.length === 0 && <div className="text-center py-12 text-gray-400">No payments yet</div>}
-                  </div>
+                  <OnlinePaymentsPanel
+                    showToast={showToast}
+                    askConfirm={setConfirmState}
+                    onChanged={() => fetchAll(true)}
+                  />
                 </div>
               )}
 
@@ -1317,9 +1330,13 @@ const confirmUpiPayment = async () => {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           onClick={(e) => e.target === e.currentTarget && setMeetModal(null)}>
           <div className="bg-dark-2 border border-white/10 rounded-2xl p-6 w-full max-w-md">
-            <h3 className="font-display font-bold text-lg mb-2">✓ Confirm UPI Payment</h3>
+            <h3 className="font-display font-bold text-lg mb-2">
+              {meetMode === "link" ? "📹 Send Meet Link" : "✓ Confirm UPI Payment"}
+            </h3>
             <p className="text-gray-400 text-xs mb-4">
-              Enter the meeting link. Student will receive email with this link instantly after confirmation.
+              {meetMode === "link"
+                ? "Already paid online. The student gets this link by email right away (and in their dashboard)."
+                : "Enter the meeting link. Student will receive email with this link instantly after confirmation."}
             </p>
             <div className="space-y-3 mb-4">
               <div>
@@ -1347,7 +1364,7 @@ const confirmUpiPayment = async () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500">
-                Leave empty to use default Meet link
+                Paste the full link for this session (required).
               </p>
             </div>
             <div className="flex gap-3">
@@ -1358,7 +1375,7 @@ const confirmUpiPayment = async () => {
               <button onClick={confirmUpiPayment}
                 className="flex-1 bg-gradient-to-r from-yellow-500 to-yellow-300 text-black
                   font-display font-bold py-2.5 rounded-xl text-sm">
-                Confirm & Send Link ✓
+                {meetMode === "link" ? "Save & Email Link 📹" : "Confirm & Send Link ✓"}
               </button>
             </div>
           </div>
@@ -1372,7 +1389,7 @@ const confirmUpiPayment = async () => {
 }
 
 // ---- Helper component: Booking Table (overview tab) ----
-function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi }) {
+function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi, onSendMeetLink }) {
   if (bookings.length === 0) {
     return <div className="text-center py-8 text-gray-400 text-sm">No bookings yet</div>;
   }
@@ -1413,6 +1430,11 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi 
                         className="w-7 h-7 rounded-lg bg-green-500/15 text-green-400 text-xs
                           hover:bg-green-500/25 transition-all flex items-center justify-center">✓</button>
                     )}
+                    {b.status === "confirmed" && !b.meetLink && onSendMeetLink && (
+                      <button onClick={() => onSendMeetLink(b)} title="Send Meet link"
+                        className="w-7 h-7 rounded-lg bg-teal-500/15 text-teal-400 text-xs
+                          hover:bg-teal-500/25 transition-all flex items-center justify-center">📹</button>
+                    )}
                     {b.status === "pending_upi" && (
                       <button onClick={() => onConfirmUpi(b._id)} title="Confirm UPI"
                         className="w-7 h-7 rounded-lg bg-orange-500/15 text-orange-400 text-xs
@@ -1436,7 +1458,7 @@ function BookingTable({ bookings, onStatusUpdate, onNote, onEmail, onConfirmUpi 
 }
 
 // ---- Helper component: Booking Card (bookings tab) ----
-function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi, onReschedule, onRespondReschedule, onAddResource, onRemoveResource }) {
+function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi, onSendMeetLink, onReschedule, onRespondReschedule, onAddResource, onRemoveResource }) {
   const [expanded, setExpanded] = useState(false);
   const [resTitle, setResTitle] = useState("");
   const [resUrl, setResUrl] = useState("");
@@ -1518,6 +1540,13 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
                 className="bg-orange-500/10 border border-orange-500/20 text-orange-400
                   px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-orange-500/20 transition-all">
                 🔄 Reschedule
+              </button>
+              <button onClick={() => onSendMeetLink(b)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+                  ${b.meetLink
+                    ? "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                    : "bg-teal-500/15 border-teal-500/40 text-teal-300 hover:bg-teal-500/25"}`}>
+                {b.meetLink ? "📹 Change link" : "📹 Send Meet link"}
               </button>
             </>
           )}
@@ -1601,7 +1630,15 @@ function BookingCard({ booking: b, onStatusUpdate, onNote, onEmail, onConfirmUpi
             {b.paymentMethod && (
               <div>
                 <div className="text-xs text-gray-400 mb-1">Payment Method</div>
-                <div className="text-sm">{b.paymentMethod === "upi" ? "📱 UPI" : "💳 Razorpay"}</div>
+                <div className="text-sm">
+                  {b.paymentMethod === "upi" ? "📱 UPI (manual)" : b.paymentMethod === "manual" ? "🧾 Manual" : "💳 Online (Razorpay)"}
+                  {b.onlinePayment?.method && (
+                    <span className="text-gray-400"> · {b.onlinePayment.method}{b.onlinePayment.international ? " 🌍" : ""}</span>
+                  )}
+                </div>
+                {b.onlinePayment?.paymentId && (
+                  <div className="font-mono text-xs text-gray-500 mt-1">{b.onlinePayment.paymentId}</div>
+                )}
               </div>
             )}
             {b.adminNotes && (

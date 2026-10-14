@@ -5,6 +5,7 @@ const Booking = require("../models/Booking");
 const Payment = require("../models/Payment");
 const Slot = require("../models/Slot");
 const Package = require("../models/Package");
+const OnlinePayment = require("../models/OnlinePayment");
 const { ACTIVE_BOOKING_STATUSES } = require("../utils/bookingConstants");
 
 router.use(protect, adminOnly);
@@ -16,11 +17,26 @@ router.get("/stats", async (req, res) => {
     const confirmed = await Booking.countDocuments({ status: "confirmed" });
     const completed = await Booking.countDocuments({ status: "completed" });
     const cancelled = await Booking.countDocuments({ status: "cancelled" });
-    const payments = await Payment.find({ status: "paid" });
-    const totalRevenue = payments.reduce((sum, p) => sum + p.amount / 100, 0);
+    // Revenue = what students actually paid for live sessions (UPI verified,
+    // online, or manual-paid), counted from bookings. The legacy Payment
+    // collection only held v1 test-mode records, so it's no longer used here.
+    const rev = await Booking.aggregate([
+      { $match: { status: { $in: ["confirmed", "completed"] } } },
+      { $group: { _id: "$paymentMethod", total: { $sum: "$packagePrice" } } },
+    ]);
+    const byMethod = Object.fromEntries(rev.map((r) => [r._id || "upi", r.total]));
+    const totalRevenue = rev.reduce((sum, r) => sum + r.total, 0);
+    const needMeetLink = await Booking.countDocuments({
+      status: "confirmed",
+      $or: [{ meetLink: null }, { meetLink: "" }, { meetLink: { $exists: false } }],
+    });
+    const paymentConflicts = await OnlinePayment.countDocuments({ conflict: true, conflictResolved: false });
     res.json({
       success: true,
-      stats: { totalBookings, confirmed, completed, cancelled, totalRevenue },
+      stats: {
+        totalBookings, confirmed, completed, cancelled, totalRevenue,
+        onlineRevenue: byMethod.razorpay || 0, needMeetLink, paymentConflicts,
+      },
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -61,7 +77,7 @@ router.get("/bookings", async (req, res) => {
     }
     const bookings = await Booking.find(filter)
       .populate("user", "name email phone")
-      .populate("payment", "status razorpayPaymentId method amount")
+      .populate("onlinePayment", "orderId paymentId method international amount status")
       .sort({ createdAt: -1 });
     res.json({ success: true, bookings });
   } catch (err) {
@@ -105,6 +121,37 @@ router.put("/bookings/:id", async (req, res) => {
     }
 
     res.json({ success: true, booking });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---- SEND / UPDATE MEET LINK (emails the student) ----
+// Used for online-paid bookings (confirmed instantly, link added after)
+// and whenever a link changes.
+router.post("/bookings/:id/meet-link", async (req, res) => {
+  try {
+    const meetLink = String(req.body.meetLink || "").trim();
+    if (!/^https?:\/\/\S+$/i.test(meetLink)) {
+      return res.status(400).json({ success: false, error: "Enter a full meeting link starting with https://" });
+    }
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ success: false, error: "Booking not found" });
+    if (booking.status !== "confirmed") {
+      return res.status(400).json({ success: false, error: `Can't send a link for a ${booking.status} booking` });
+    }
+    booking.meetLink = meetLink;
+    await booking.save();
+
+    const to = booking.studentInfo?.email;
+    if (!to) return res.json({ success: true, booking, emailed: false });
+    const { sendMeetLinkEmail } = require("../utils/sendEmail");
+    try {
+      await sendMeetLinkEmail(to, booking);
+    } catch (e) {
+      return res.json({ success: true, booking, emailed: false, error: "Link saved, but the email failed: " + e.message });
+    }
+    res.json({ success: true, booking, emailed: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

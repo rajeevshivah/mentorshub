@@ -290,4 +290,139 @@ const sendReminder = async (email, booking) => {
   }
 };
 
-module.exports = { sendBookingConfirmation, sendUpiPendingEmail, sendUpiConfirmedEmail, sendReminder };
+// ============================================================
+// Online payment (Razorpay) emails
+// ============================================================
+
+// Escape anything a student typed before it goes into HTML
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+));
+
+const footer = (bm) => `
+  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:24px 0">
+  <p style="color:#7a8499;font-size:12px;margin:0">${bm.name} · ${bm.url}</p>`;
+
+const meetBlock = (link) => `
+  <div style="background:#00d4aa11;border:1px solid #00d4aa33;border-radius:12px;padding:20px;margin-bottom:24px;text-align:center">
+    <p style="color:#00d4aa;margin:0 0 12px;font-weight:bold">📹 Your Google Meet Link</p>
+    <a href="${esc(link)}" style="background:#00d4aa;color:#0b0f1a;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">
+      Join Meeting →
+    </a>
+  </div>`;
+
+// Student: paid online → session confirmed, Meet link follows
+const sendPaymentReceivedEmail = async (email, booking, payment) => {
+  const bm = brandMeta(booking.brand);
+  try {
+    await sendEmail(email, `✅ Payment received — ${booking.packageName} confirmed`, `
+      <div style="${baseStyle}">
+        <h2 style="color:${bm.accent};font-size:26px;margin-bottom:8px">Payment received. Your session is confirmed 🎉</h2>
+        <p style="color:#7a8499;margin-bottom:24px">Hi ${esc(booking.studentInfo?.name)}, thank you. Here are your booking details:</p>
+        <div style="${detailBox}">
+          <p style="margin:0 0 12px"><span style="color:#7a8499">📦 Package:</span> <strong>${esc(booking.packageName)}</strong></p>
+          <p style="margin:0 0 12px"><span style="color:#7a8499">⏱ Duration:</span> <strong>${esc(booking.packageDuration)}</strong></p>
+          <p style="margin:0 0 12px"><span style="color:#7a8499">📅 Date:</span> <strong>${esc(booking.date)}</strong></p>
+          <p style="margin:0 0 12px"><span style="color:#7a8499">⏰ Time:</span> <strong>${esc(booking.timeSlot)} IST</strong></p>
+          <p style="margin:0 0 12px"><span style="color:#7a8499">💰 Amount Paid:</span> <strong style="color:${bm.accent}">₹${booking.packagePrice}</strong></p>
+          <p style="margin:0"><span style="color:#7a8499">🔖 Payment ID:</span> <strong>${esc(payment?.paymentId || "—")}</strong></p>
+        </div>
+        ${booking.meetLink ? meetBlock(booking.meetLink) : `
+        <div style="background:${bm.accent}11;border:1px solid ${bm.accent}33;border-radius:12px;padding:16px;margin-bottom:24px">
+          <p style="color:${bm.accent};margin:0;font-size:14px">📹 Your Google Meet link will be emailed to you separately before the session. You'll also see it in your dashboard.</p>
+        </div>`}
+        ${footer(bm)}
+      </div>
+    `, bm.sender);
+  } catch (err) {
+    console.error("❌ Payment received email error:", err.message);
+  }
+};
+
+// Student: here is your Meet link (sent from admin)
+const sendMeetLinkEmail = async (email, booking) => {
+  const bm = brandMeta(booking.brand);
+  try {
+    await sendEmail(email, `📹 Your Meet link — ${booking.packageName} on ${booking.date}`, `
+      <div style="${baseStyle}">
+        <h2 style="color:${bm.accent};font-size:24px;margin-bottom:8px">Your session link is ready</h2>
+        <p style="color:#7a8499;margin-bottom:24px">Hi ${esc(booking.studentInfo?.name)}, here is the link for your session.</p>
+        <div style="${detailBox}">
+          <p style="margin:0 0 12px"><span style="color:#7a8499">📦 Package:</span> <strong>${esc(booking.packageName)}</strong></p>
+          <p style="margin:0 0 12px"><span style="color:#7a8499">📅 Date:</span> <strong>${esc(booking.date)}</strong></p>
+          <p style="margin:0"><span style="color:#7a8499">⏰ Time:</span> <strong>${esc(booking.timeSlot)} IST</strong></p>
+        </div>
+        ${meetBlock(booking.meetLink)}
+        ${footer(bm)}
+      </div>
+    `, bm.sender);
+  } catch (err) {
+    console.error("❌ Meet link email error:", err.message);
+    throw err; // admin action — let the route report it
+  }
+};
+
+// Admin: a new booking came in (UPI = needs verification, online = needs Meet link)
+const sendAdminNewBookingEmail = async (adminEmail, booking) => {
+  const bm = brandMeta(booking.brand);
+  const online = booking.paymentMethod === "razorpay";
+  const action = online
+    ? "Paid online. Add a Meet link from Admin → Bookings."
+    : `UPI payment to verify. UTR: ${esc(booking.upiTransactionId || "—")}`;
+  try {
+    await sendEmail(adminEmail, `${online ? "💳 Paid" : "⏳ UPI"} booking: ${booking.packageName} · ${booking.date} ${booking.timeSlot}`, `
+      <div style="${baseStyle}">
+        <h2 style="color:${bm.accent};font-size:22px;margin-bottom:8px">New ${bm.name} booking</h2>
+        <p style="color:#e8eaf0;margin-bottom:20px">${action}</p>
+        <div style="${detailBox}">
+          <p style="margin:0 0 10px"><span style="color:#7a8499">Student:</span> <strong>${esc(booking.studentInfo?.name)}</strong> · ${esc(booking.studentInfo?.email)} · ${esc(booking.studentInfo?.phone)}</p>
+          <p style="margin:0 0 10px"><span style="color:#7a8499">Package:</span> <strong>${esc(booking.packageName)}</strong> (₹${booking.packagePrice})</p>
+          <p style="margin:0"><span style="color:#7a8499">When:</span> <strong>${esc(booking.date)} · ${esc(booking.timeSlot)} IST</strong></p>
+        </div>
+        ${footer(bm)}
+      </div>
+    `, bm.sender);
+  } catch (err) {
+    console.error("❌ Admin new-booking email error:", err.message);
+  }
+};
+
+// Student + admin: money arrived but the slot was gone (checkout left open too long)
+const sendSlotConflictEmails = async (payment) => {
+  const bm = brandMeta(payment.brand);
+  const b = payment.booking || {};
+  const student = b.studentInfo || {};
+  try {
+    if (student.email) {
+      await sendEmail(student.email, `Payment received — we'll fix your session time`, `
+        <div style="${baseStyle}">
+          <h2 style="color:${bm.accent};font-size:22px;margin-bottom:8px">Your payment is safe</h2>
+          <p style="color:#7a8499;margin-bottom:20px">Hi ${esc(student.name)}, we received ₹${payment.amount} for <strong>${esc(payment.packageName)}</strong>, but the slot you picked (${esc(b.date)} · ${esc(b.timeSlot)} IST) was booked by someone else before your payment completed.</p>
+          <p style="color:#e8eaf0;margin-bottom:20px">Rajeev will contact you within a few hours to pick a new time, or refund you in full if you prefer. Payment ID: <strong>${esc(payment.paymentId)}</strong></p>
+          ${footer(bm)}
+        </div>
+      `, bm.sender);
+    }
+  } catch (err) {
+    console.error("❌ Conflict email (student) error:", err.message);
+  }
+  try {
+    if (process.env.ADMIN_EMAIL) {
+      await sendEmail(process.env.ADMIN_EMAIL, `⚠️ Paid but slot taken: ${payment.packageName} · ${b.date} ${b.timeSlot}`, `
+        <div style="${baseStyle}">
+          <h2 style="color:#ff6b6b;font-size:22px;margin-bottom:8px">Online payment needs attention</h2>
+          <p style="color:#e8eaf0;margin-bottom:20px">${esc(student.name)} (${esc(student.email)}, ${esc(student.phone)}) paid ₹${payment.amount} for ${esc(payment.packageName)} on ${esc(b.date)} · ${esc(b.timeSlot)}, but that slot was already taken. No booking was created.</p>
+          <p style="color:#7a8499">Open Admin → Payments → Online and use "Rebook" to put it on a new slot after talking to the student, or refund from the Razorpay dashboard and mark it resolved. Payment ID: ${esc(payment.paymentId)}</p>
+          ${footer(bm)}
+        </div>
+      `, bm.sender);
+    }
+  } catch (err) {
+    console.error("❌ Conflict email (admin) error:", err.message);
+  }
+};
+
+module.exports = {
+  sendBookingConfirmation, sendUpiPendingEmail, sendUpiConfirmedEmail, sendReminder,
+  sendPaymentReceivedEmail, sendMeetLinkEmail, sendAdminNewBookingEmail, sendSlotConflictEmails,
+};
